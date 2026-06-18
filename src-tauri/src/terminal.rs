@@ -123,6 +123,48 @@ fn default_command() -> (String, Vec<String>) {
     ("/bin/sh".to_string(), Vec::new())
 }
 
+/// macOS GUI apps inherit a minimal PATH, so a bare command like `ollama` or `claude`
+/// won't resolve. Resolve a bare cmd to its absolute path by probing the common bin
+/// dirs (the same ones we add to the child PATH below). Falls back to the bare name.
+fn resolve_cmd(cmd: &str) -> String {
+    if cmd.contains('/') {
+        return cmd.to_string();
+    }
+    let mut dirs_list: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(h) = dirs::home_dir() {
+        dirs_list.push(h.join(".local/bin"));
+        dirs_list.push(h.join("bin"));
+    }
+    for d in ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"] {
+        dirs_list.push(d.into());
+    }
+    for d in dirs_list {
+        let p = d.join(cmd);
+        if p.is_file() {
+            return p.to_string_lossy().into_owned();
+        }
+    }
+    cmd.to_string()
+}
+
+/// PATH the spawned PTY (and its subprocesses) should see — common tool locations
+/// prepended to whatever the app inherited, so ollama/claude/brew tools resolve.
+fn child_path() -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(h) = dirs::home_dir() {
+        parts.push(h.join(".local/bin").to_string_lossy().into_owned());
+    }
+    parts.push("/opt/homebrew/bin".into());
+    parts.push("/usr/local/bin".into());
+    let cur = std::env::var("PATH").unwrap_or_default();
+    if !cur.is_empty() {
+        parts.push(cur);
+    } else {
+        parts.push("/usr/bin:/bin".into());
+    }
+    parts.join(":")
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -188,6 +230,8 @@ pub fn spawn_terminal(app: AppHandle, opts: SpawnOpts) -> Result<String, String>
 
     // Defense-in-depth: refuse argument-injection into agent binaries (claude/codex).
     validate_agent_args(&cmd, &default_args)?;
+    // Resolve bare commands (ollama/claude/…) to an absolute path (GUI-app PATH is minimal).
+    let cmd = resolve_cmd(&cmd);
 
     let pty_system = NativePtySystem::default();
     let pair = pty_system
@@ -212,6 +256,8 @@ pub fn spawn_terminal(app: AppHandle, opts: SpawnOpts) -> Result<String, String>
     }
     // A sane TERM so curses apps (and `claude`) render correctly.
     builder.env("TERM", "xterm-256color");
+    // Give the PTY (and its children) a PATH that finds ollama/claude/brew tools.
+    builder.env("PATH", child_path());
 
     let child = pair
         .slave

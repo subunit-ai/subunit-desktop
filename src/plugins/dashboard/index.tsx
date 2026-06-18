@@ -395,6 +395,10 @@ function DashboardView({ host }: { host: HostApi }) {
   const [activeTerm, setActiveTerm] = useState<TermInfo | null>(null);
   const [runningTaskIds, setRunningTaskIds] = useState<Set<string>>(new Set());
 
+  // Local answer models (the downloaded ollama ones) used by "Lokal ausführen".
+  const [runModels, setRunModels] = useState<{ id: string; label: string }[]>([]);
+  const [runModel, setRunModel] = useState<string>("");
+
   // ── Notion tasks ──
   const loadTasks = useCallback(async () => {
     setTasksLoading(true);
@@ -425,6 +429,44 @@ function DashboardView({ host }: { host: HostApi }) {
       setTermsRefreshing(false);
     }
   }, [host]);
+
+  // Load the LOCAL answer models (the downloaded ollama ones) for "Lokal ausführen".
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const saved = (await host.storage.get("dashboard.runModel")) as string | undefined;
+        const res = await host.backend.fetch("atlas-api", "/api/m/models");
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as {
+          models: { id: string; label: string; kind: string; available: boolean }[];
+          default?: string;
+        };
+        const local = (data.models ?? [])
+          .filter((m) => m.kind === "local" && m.available)
+          .map((m) => ({ id: m.id, label: m.label }));
+        setRunModels(local);
+        const pick =
+          saved && local.some((m) => m.id === saved)
+            ? saved
+            : data.default ?? local[0]?.id ?? "";
+        setRunModel(pick);
+      } catch {
+        /* offline / no backend — "Lokal ausführen" falls back to a default model */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [host]);
+
+  const selectRunModel = useCallback(
+    (id: string) => {
+      setRunModel(id);
+      void host.storage.set("dashboard.runModel", id);
+    },
+    [host]
+  );
 
   useEffect(() => {
     void loadTasks();
@@ -463,17 +505,18 @@ function DashboardView({ host }: { host: HostApi }) {
         return;
       }
       try {
+        // Run the task on a LOCAL model (the downloaded ollama ones) — not the cloud.
+        // `ollama run <model> <prompt>`: the prompt is positional, so the "-" guard
+        // above (rejecting titles starting with "-") stops it being read as a flag.
+        const llm = runModel || "qwen2.5:7b-instruct";
         const id = await host.terminals.spawn({
-          cmd: "claude",
-          args: ["-p", "--", prompt],
+          cmd: "ollama",
+          args: ["run", llm, prompt],
           taskId: t.id,
           title: t.title,
         });
         setRunningTaskIds((s) => new Set(s).add(t.id));
-        host.notifications.notify(
-          "Aufgabe gestartet",
-          `Claude läuft lokal: ${t.title}`
-        );
+        host.notifications.notify("Lokal gestartet", `${llm} arbeitet an: ${t.title}`);
         await loadTerms();
         // Open the freshly spawned pty in the pane.
         const list = await host.terminals.list();
@@ -486,7 +529,7 @@ function DashboardView({ host }: { host: HostApi }) {
         );
       }
     },
-    [host, loadTerms]
+    [host, loadTerms, runModel]
   );
 
   const openTerm = useCallback((t: TermInfo) => setActiveTerm(t), []);
@@ -516,6 +559,22 @@ function DashboardView({ host }: { host: HostApi }) {
           {headline}
         </span>
       </div>
+
+      {runModels.length > 0 && (
+        <div className="dash-runbar">
+          <span className="dash-runbar-lbl">Lokal ausführen mit</span>
+          {runModels.map((m) => (
+            <button
+              key={m.id}
+              className={`chip dash-runchip${m.id === runModel ? " on" : ""}`}
+              onClick={() => selectRunModel(m.id)}
+              title={`Aufgaben lokal mit ${m.label} ausführen`}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="dash-grid">
         <TaskList
@@ -583,6 +642,10 @@ function DashStyle() {
 .dash-hero-chip{cursor:default;gap:7px;padding:8px 14px;font-weight:600}
 .dash-hero-chip svg{width:14px;height:14px;stroke:var(--cyan-d)}
 
+.dash-runbar{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin:0 2px 16px}
+.dash-runbar-lbl{font-size:11px;font-weight:650;letter-spacing:.05em;text-transform:uppercase;color:var(--ink3);margin-right:2px}
+.dash-runchip{font-weight:550;color:var(--ink2)}
+.dash-runchip.on{border-color:rgba(6,182,212,.4);color:var(--cyan-d);background:rgba(6,182,212,.08)}
 .dash-grid{display:grid;grid-template-columns:minmax(0,1fr) 384px;gap:20px;align-items:start}
 @media(max-width:980px){.dash-grid{grid-template-columns:1fr}}
 
@@ -675,7 +738,7 @@ const plugin: PluginModule = {
     description:
       "Ops board — Notion tasks, delegate to u1 or run locally, live terminals.",
     icon: ICON,
-    permissions: ["notion", "terminals", "notifications", "storage"],
+    permissions: ["notion", "terminals", "notifications", "storage", "backend:atlas-api"],
     nav: { section: "ops", order: 0 },
     commands: [
       { id: "open", title: "Go to Ops Board" },

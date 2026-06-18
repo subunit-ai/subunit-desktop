@@ -450,10 +450,22 @@ function DashboardView({ host }: { host: HostApi }) {
 
   const onRun = useCallback(
     async (t: NotionTask) => {
+      // Argument-injection guard: a task title starting with "-" could be parsed as a
+      // claude FLAG (e.g. an agent permission-bypass) instead of the prompt — and task
+      // titles will come from Notion (external content). Refuse such titles, and pass
+      // the prompt AFTER a "--" end-of-options separator so it's always positional.
+      const prompt = (t.title ?? "").trim();
+      if (!prompt || prompt.startsWith("-")) {
+        host.notifications.notify(
+          "Lokaler Start abgelehnt",
+          "Unsicherer Aufgaben-Titel (leer oder beginnt mit „-“)."
+        );
+        return;
+      }
       try {
         const id = await host.terminals.spawn({
           cmd: "claude",
-          args: ["-p", t.title],
+          args: ["-p", "--", prompt],
           taskId: t.id,
           title: t.title,
         });

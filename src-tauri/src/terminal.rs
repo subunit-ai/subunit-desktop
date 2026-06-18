@@ -130,6 +130,43 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// Binaries whose args carry security weight: a crafted positional (e.g. a Notion
+/// task title that begins with `-`) could be parsed as an agent FLAG — including a
+/// permission-bypass — rather than the prompt.
+fn is_agent_binary(cmd: &str) -> bool {
+    let base = std::path::Path::new(cmd)
+        .file_name()
+        .map(|s| s.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    matches!(base.as_str(), "claude" | "claude-code" | "codex")
+}
+
+/// Defense-in-depth against argument injection for agent binaries. Before any `--`
+/// end-of-options separator, every flag-looking arg (`-…`) MUST be on the allowlist;
+/// after `--`, args are positional and allowed. This blocks a future plugin from
+/// reintroducing the injection even if the frontend guard is bypassed. Non-agent
+/// binaries (a plain shell, etc.) are not constrained here.
+fn validate_agent_args(cmd: &str, args: &[String]) -> Result<(), String> {
+    if !is_agent_binary(cmd) {
+        return Ok(());
+    }
+    const ALLOWED: &[&str] = &[
+        "-p", "--print", "-c", "--continue", "--resume", "--model",
+        "--output-format", "--input-format", "--verbose", "--append-system-prompt",
+    ];
+    for a in args {
+        if a == "--" {
+            break; // end of options — everything after is a positional prompt
+        }
+        if a.starts_with('-') && !ALLOWED.contains(&a.as_str()) {
+            return Err(format!(
+                "refused unsafe argument for agent `{cmd}`: {a} (pass the prompt after `--`)"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Spawn a local PTY session and stream its output to the frontend.
 ///
 /// Returns the new session id. The reader thread emits `terminal://output`
@@ -148,6 +185,9 @@ pub fn spawn_terminal(app: AppHandle, opts: SpawnOpts) -> Result<String, String>
             (c, opts.args.unwrap_or(a))
         }
     };
+
+    // Defense-in-depth: refuse argument-injection into agent binaries (claude/codex).
+    validate_agent_args(&cmd, &default_args)?;
 
     let pty_system = NativePtySystem::default();
     let pair = pty_system

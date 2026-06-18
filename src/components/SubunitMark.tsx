@@ -1,64 +1,103 @@
 /**
- * SubunitMark — the brand glyph for the shell chrome (sidebar header).
+ * SubunitMark — the Subunit crown emblem as a crisp inline SVG.
  *
- * An 8-point compass/north-star (violet core → cyan tips), ported in spirit from
- * atlas-web's AtlasLogoMark so the desktop shell, web app and iOS read as one
- * brand. Self-contained TSX (no cross-import from atlas-web's JSX). Mints a
- * unique gradient id per instance so several marks can share a page.
+ * Traced from the brand mark (`subunit logo schwarz.png`): a faceted hollow
+ * crown with three peaks + deep V-notches, inner spikes, a central stem node,
+ * two inner leg-wedges, and three descending circuit lines ending in small
+ * dots. Drawn on a 0..512 viewBox with the same vertex set as the app icon so
+ * the in-app mark and the dock icon read as one shape.
+ *
+ * Colour is driven by `currentColor` (set the parent's `color` to the cyan
+ * accent or ink per theme). Stroke weight scales with the rendered size so the
+ * mark stays crisp from a 22px titlebar glyph up to a hero lockup.
+ *
+ * Liquid-Glass note: this is pure geometry — no palette is hardcoded. The one
+ * cyan accent comes from the caller (e.g. `style={{ color: "var(--cyan)" }}`).
  */
 
-import { useId } from "react";
+import { type CSSProperties } from "react";
 
-const STAR_POINTS =
-  "50,3 52.53,43.9 65.2,34.8 56.1,47.47 97,50 56.1,52.53 65.2,65.2 52.53,56.1 " +
-  "50,97 47.47,56.1 34.8,65.2 43.9,52.53 3,50 43.9,47.47 34.8,34.8 47.47,43.9";
-
-const coreTransform = (s: number) =>
-  `translate(50 50) scale(${s}) translate(-50 -50)`;
+export interface SubunitMarkProps {
+  /** Rendered square size in px. Default 26 (dock-head size). */
+  size?: number;
+  /** Stroke weight in viewBox units (0..512). Default auto-tuned per size. */
+  strokeWidth?: number;
+  /** Extra class on the <svg>. */
+  className?: string;
+  /** Inline style (e.g. `{ color: "var(--cyan)" }`). */
+  style?: CSSProperties;
+  /** Accessible title; omit for a decorative mark (aria-hidden). */
+  title?: string;
+}
 
 export function SubunitMark({
-  size = 22,
-  glow = "drop-shadow(0 0 4px rgba(124,58,237,0.6)) drop-shadow(0 0 9px rgba(0,242,255,0.5))",
-  twinkle = true,
-}: {
-  size?: number;
-  glow?: string;
-  twinkle?: boolean;
-}) {
-  const uid = useId().replace(/:/g, "");
-  const bodyGrad = `sumStar-${uid}`;
-  const coreGrad = `sumCore-${uid}`;
+  size = 26,
+  strokeWidth,
+  className,
+  style,
+  title,
+}: SubunitMarkProps) {
+  // Auto-tune stroke for legibility: heavier at small sizes, finer when large.
+  const sw = strokeWidth ?? (size <= 24 ? 22 : size <= 40 ? 19 : 16);
+
   return (
     <svg
+      className={className}
       width={size}
       height={size}
-      viewBox="0 0 100 100"
+      viewBox="0 0 512 512"
       fill="none"
-      role="img"
-      aria-label="Subunit"
-      style={{ filter: glow, flex: "none" }}
+      stroke="currentColor"
+      strokeWidth={sw}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      role={title ? "img" : undefined}
+      aria-hidden={title ? undefined : true}
+      aria-label={title}
+      style={style}
     >
-      <defs>
-        <radialGradient id={bodyGrad} cx="50%" cy="50%" r="52%">
-          <stop offset="0%" stopColor="#7c3aed" />
-          <stop offset="52%" stopColor="#8b5cf6" />
-          <stop offset="100%" stopColor="#00f2ff" />
-        </radialGradient>
-        <radialGradient id={coreGrad} cx="50%" cy="50%" r="50%">
-          <stop offset="0%" stopColor="#ffffff" />
-          <stop offset="38%" stopColor="#7df6ff" />
-          <stop offset="100%" stopColor="#00f2ff" stopOpacity="0" />
-        </radialGradient>
-      </defs>
-      <polygon points={STAR_POINTS} fill={`url(#${bodyGrad})`} />
-      <polygon
-        points={STAR_POINTS}
-        fill={`url(#${coreGrad})`}
-        transform={coreTransform(0.52)}
-        className={twinkle ? "mark-twinkle" : ""}
-        style={{ transformOrigin: "center" }}
+      {title ? <title>{title}</title> : null}
+
+      {/* ── Outer crown silhouette (one closed path):
+            center peak → right V-notch → right peak → right shoulder →
+            base fold → mirror back up the left side. ── */}
+      <path
+        d="M256 56
+           L300 156
+           L360 122
+           L436 180
+           L402 264
+           L256 312
+           L110 264
+           L76 180
+           L152 122
+           L212 156
+           Z"
       />
-      <circle cx="50" cy="50" r="3.1" fill="#ffffff" fillOpacity="0.95" />
+
+      {/* ── Internal creases ── */}
+      {/* center peak ridge → stem node */}
+      <path d="M256 96 L256 312" />
+      {/* inner spikes from the V-notches diving to the node */}
+      <path d="M300 156 L256 252" />
+      <path d="M212 156 L256 252" />
+      {/* outer-peak creases down to the shoulder fold */}
+      <path d="M360 122 L402 264" />
+      <path d="M152 122 L110 264" />
+
+      {/* ── Inner leg-wedges flanking the stem ── */}
+      <path d="M168 284 L168 366 L218 330" />
+      <path d="M344 284 L344 366 L294 330" />
+
+      {/* ── Circuit lines + ring dots ── */}
+      <path d="M256 312 L256 438" />
+      <path d="M256 330 L208 364 L208 410" />
+      <path d="M256 330 L304 364 L304 410" />
+      <circle cx="256" cy="456" r="13" fill="currentColor" stroke="none" />
+      <circle cx="208" cy="430" r="11" fill="currentColor" stroke="none" />
+      <circle cx="304" cy="430" r="11" fill="currentColor" stroke="none" />
     </svg>
   );
 }
+
+export default SubunitMark;

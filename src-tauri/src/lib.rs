@@ -9,6 +9,12 @@ mod auth;
 mod commands;
 mod config;
 mod http; // shared pooled HTTP client for the cloud auth path
+mod terminal; // local PTY terminals + external plugin discovery
+
+/// Tauri event names the terminal reader thread emits (kept in sync with
+/// `src/plugin/host.tsx` TERMINAL_EVENTS).
+pub const EVENT_TERMINAL_OUTPUT: &str = "terminal://output";
+pub const EVENT_TERMINAL_EXIT: &str = "terminal://exit";
 
 use commands::AppState;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
@@ -71,6 +77,13 @@ pub fn run() {
             commands::open_external,
             commands::check_for_updates,
             commands::install_update,
+            // Local PTY terminals (terminal.rs).
+            terminal::spawn_terminal,
+            terminal::list_terminals,
+            terminal::write_terminal,
+            terminal::kill_terminal,
+            // External plugin discovery (terminal.rs).
+            terminal::list_plugins,
         ])
         .setup(|app| {
             log::info!(

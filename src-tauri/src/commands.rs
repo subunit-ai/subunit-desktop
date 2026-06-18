@@ -18,16 +18,20 @@ use parking_lot::Mutex;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
-/// App-wide managed state. The shell only needs the persisted account config;
-/// modules talk to their backends over HTTP from the frontend.
+/// App-wide managed state. The shell holds the persisted account config plus the
+/// live local-terminal registry; modules talk to their backends over HTTP from
+/// the frontend.
 pub struct AppState {
     pub config: Mutex<Config>,
+    /// Local PTY sessions spawned by plugins (terminals.rs).
+    pub terminals: crate::terminal::TerminalManager,
 }
 
 impl AppState {
     pub fn new(config: Config) -> Self {
         Self {
             config: Mutex::new(config),
+            terminals: crate::terminal::TerminalManager::new(),
         }
     }
 }

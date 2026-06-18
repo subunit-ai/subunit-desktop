@@ -1,0 +1,461 @@
+/* ============================================================================
+   SUBUNIT — LIQUID GLASS  ·  Design System (Drop-in CSS)
+   ----------------------------------------------------------------------------
+   A reusable frosted-glass UI kit, extracted 1:1 from the live meet.subunit.ai
+   redesign (v2.0.0). Light is the default; dark is an opt-in CSS-variable swap
+   on  html.dark .  Frosted glass stays glass in both themes; one cyan accent,
+   soft depth over a radial mesh, generous whitespace, rounded forms.
+
+   HOW TO USE
+   1.  <link rel="stylesheet" href="subunit-liquid-glass.css">
+   2.  Put the anti-FOUC <script> from the style-guide in <head> (before paint).
+   3.  Build your screens out of the component classes below (.card / .action /
+       .tile / .btn / .fld / .picker / .pill / .sect …).
+   4.  Drop in the brand mark (.brand + .echo) and the theme toggle (.themetog).
+   All colours, radii, shadows and surfaces resolve through CSS variables, so a
+   product can re-tint the whole system by overriding a handful of tokens.
+   ============================================================================ */
+
+/* ════════════════════════════════════════════════════════════════════════
+   1) DESIGN TOKENS  —  LIGHT (default)
+   Override any of these per-product to re-skin without touching components.
+   ════════════════════════════════════════════════════════════════════════ */
+:root{
+  /* — Ink / background / accent — */
+  --bg:#eef3fa;                 /* base page colour (under the mesh)            */
+  --ink:#0b1b30;                /* primary text — deep navy                     */
+  --ink2:#586b82;              /* secondary text / labels                      */
+  --ink3:#93a1b4;              /* tertiary text / placeholders / chevrons      */
+  --cyan:#06b6d4;              /* THE accent — use sparingly                   */
+  --cyan-d:#0a93b2;            /* accent for text/icons (darker, AA on light)  */
+  --cyan-ink:#0784a0;          /* accent ink (deepest)                         */
+
+  /* — Glass fills (the frosted-glass body of cards/surfaces) — */
+  --glass:rgba(255,255,255,.66);  /* primary glass (cards, actions, modals)    */
+  --glass2:rgba(255,255,255,.52); /* secondary glass (tiles, ghost btn, seg)   */
+
+  /* — Hairlines (separate by faint line, mostly by spacing) — */
+  --line:rgba(18,40,72,.09);    /* default 1px border                          */
+  --line2:rgba(18,40,72,.14);  /* stronger border / hover                     */
+
+  /* — Radii (rounded forms) — */
+  --r:26px;                     /* large surfaces: cards, actions, modals       */
+  --r-sm:18px;                  /* mid: tiles, code box, deep-dive sections     */
+  --r-xs:14px;                  /* small: chips, back button                    */
+
+  /* — Shadows (soft depth, never harsh) — */
+  --shadow:0 26px 62px -30px rgba(18,48,92,.34);     /* lifted card             */
+  --shadow-sm:0 12px 30px -18px rgba(18,48,92,.28);  /* fields, pills, rows      */
+
+  /* — Semantic status colours — */
+  --ok:#16a34a;    --ok-bg:rgba(22,163,74,.12);   --ok-line:rgba(22,163,74,.28);
+  --amber:#d97706; --amber-bg:rgba(217,119,6,.10); --amber-line:rgba(217,119,6,.30);
+  --red:#e11d48;
+  --violet:#7c5cf0;
+
+  /* ── Theme-able surfaces (the knobs the dark swap flips) ── */
+  /* html background: full-bleed gradient + solid fallback = gradient TOP colour
+     so top overscroll / status-bar stays seamless. */
+  --page-grad:linear-gradient(168deg,#f4f8fd 0%,#e9eff7 50%,#edf4f9 100%) #f4f8fd;
+
+  /* radial mesh blobs behind everything (body::before) */
+  --mesh1:rgba(6,182,212,.22);  --mesh2:rgba(116,108,245,.16);  --mesh3:rgba(6,182,212,.17);
+
+  /* frosted-glass edges & inner highlight rims (the "liquid" feel) */
+  --glass-edge:rgba(255,255,255,.62);   /* card / action 1px border            */
+  --glass-edge2:rgba(255,255,255,.7);   /* modal / recap border                */
+  --rim:rgba(255,255,255,.72);          /* inner top highlight on cards         */
+  --rim-soft:rgba(255,255,255,.5);      /* softer inner highlight (action icon) */
+  --rim-cta:rgba(255,255,255,.4);       /* inner highlight on primary cta       */
+  --rim-danger:rgba(255,255,255,.3);
+
+  /* translucent fills used across fields / tiles / rows */
+  --fill-strong:rgba(255,255,255,.72);  /* fields, pickers, selects            */
+  --fill-focus:#fff;                    /* field bg on :focus                  */
+  --fill-mid:rgba(255,255,255,.62);     /* icon-button circle                  */
+  --fill-soft:rgba(255,255,255,.6);     /* status pill, section blocks         */
+  --fill-weak:rgba(255,255,255,.55);    /* list rows, seg track                */
+  --fill-ghost-hover:rgba(255,255,255,.78); /* ghost btn hover                 */
+  --menu-bg:rgba(255,255,255,.92);      /* dropdown / sheet card               */
+  --recap-bg:rgba(255,255,255,.94);     /* dialog card                         */
+  --grad-fade:rgba(255,255,255,.5);     /* tail of section gradients           */
+  --qr-bg:#fff;                         /* QR plate — kept light for scanners  */
+  --option-bg:#fff;                     /* native <option> bg                  */
+  --scrim:rgba(18,40,72,.42);           /* scrim behind modals                 */
+
+  /* long-form prose (transcript / explanations) */
+  --prose:#27425f;  --prose2:#33506e;
+
+  /* toggle switch (off state) */
+  --tog-off:#c3cedd; --tog-knob:#fff; --tog-knob-sh:rgba(18,48,92,.3);
+
+  /* theme-toggle icon swap (sun shows only in dark) */
+  --tg-moon:inline-flex; --tg-sun:none;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   2) DESIGN TOKENS  —  DARK  (html.dark overrides)
+   Subunit brand navy. Glass stays glass; the cyan accent glows a touch more.
+   Only the values that differ from light are redefined here.
+   ════════════════════════════════════════════════════════════════════════ */
+html.dark{
+  --bg:#040c1a; --ink:#eaf1fa; --ink2:#9fb2c9; --ink3:#6b809b;
+  --cyan:#22d3ee; --cyan-d:#22d3ee; --cyan-ink:#67e8f9;
+  --glass:rgba(20,38,64,.55); --glass2:rgba(20,38,64,.42);
+  --line:rgba(150,180,220,.12); --line2:rgba(150,180,220,.20);
+  --shadow:0 26px 64px -28px rgba(0,0,0,.66);
+  --shadow-sm:0 12px 30px -18px rgba(0,0,0,.6);
+  --ok:#34d399; --ok-bg:rgba(52,211,153,.15); --ok-line:rgba(52,211,153,.32);
+  --amber:#fbbf24; --amber-bg:rgba(251,191,36,.13); --amber-line:rgba(251,191,36,.34);
+  --red:#fb5d7e; --violet:#a78bfa;
+
+  --page-grad:linear-gradient(168deg,#071427 0%,#040c1a 52%,#06121f 100%) #071427;
+  --mesh1:rgba(6,182,212,.30); --mesh2:rgba(124,92,240,.26); --mesh3:rgba(8,145,178,.26);
+  --glass-edge:rgba(150,185,225,.16);
+  --glass-edge2:rgba(150,185,225,.18);
+  --rim:rgba(190,215,245,.16);
+  --rim-soft:rgba(190,215,245,.12);
+  --rim-cta:rgba(255,255,255,.28);
+  --rim-danger:rgba(255,255,255,.22);
+  --fill-strong:rgba(18,34,58,.66);
+  --fill-focus:rgba(12,26,46,.92);
+  --fill-mid:rgba(22,40,66,.6);
+  --fill-soft:rgba(20,38,64,.58);
+  --fill-weak:rgba(20,38,64,.5);
+  --fill-ghost-hover:rgba(28,50,80,.7);
+  --menu-bg:rgba(13,28,49,.95);
+  --recap-bg:rgba(12,26,46,.96);
+  --grad-fade:rgba(12,26,46,.5);
+  --qr-bg:#fff;                 /* keep QR plate white for scanner contrast    */
+  --option-bg:#0d1c31;
+  --scrim:rgba(2,8,18,.62);
+  --prose:#cdddef; --prose2:#b7cbe2;
+  --tog-off:#33455f; --tog-knob:#cfe0f2; --tog-knob-sh:rgba(0,0,0,.5);
+  --tg-moon:none; --tg-sun:inline-flex;
+}
+
+/* ── Dark: element-level glow fixes ──
+   Where a hardcoded cyan/navy tint is too faint over navy (selected states,
+   soft icon plates), accents are nudged up a notch so they still read. */
+html.dark .action.alt .ic{background:linear-gradient(160deg,rgba(190,215,245,.12),rgba(190,215,245,.04));color:var(--ink)}
+html.dark .tile .ic{background:rgba(34,211,238,.14)}
+html.dark .tile.sel{background:rgba(34,211,238,.13);box-shadow:0 14px 30px -14px rgba(34,211,238,.4)}
+html.dark .numpick button.sel{background:rgba(34,211,238,.16)}
+html.dark .picker .pi{color:var(--cyan)}
+html.dark .action:hover{box-shadow:0 34px 70px -28px rgba(0,0,0,.7),inset 0 1px 0 var(--rim)}
+
+/* ════════════════════════════════════════════════════════════════════════
+   3) BASE  —  reset, full-bleed gradient, font stack, mesh background
+   ════════════════════════════════════════════════════════════════════════ */
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+
+/* Full-bleed page gradient with a solid fallback (= gradient's top colour).
+   background-attachment:fixed keeps it steady while content scrolls. */
+html{min-height:100dvh;background:var(--page-grad);background-repeat:no-repeat;background-attachment:fixed}
+
+/* SF Pro / system font stack. Antialiased. Safe-area padding for notches. */
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text",system-ui,"Segoe UI",sans-serif;
+  color:var(--ink);min-height:100dvh;background:transparent;-webkit-font-smoothing:antialiased;
+  padding:max(20px,env(safe-area-inset-top)) 18px max(40px,env(safe-area-inset-bottom));
+  display:flex;flex-direction:column;align-items:center;
+}
+
+/* Mesh background: three soft radial blobs pinned behind all content.
+   This is what gives every screen its quiet "liquid" depth. */
+body::before{
+  content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+  background:
+    radial-gradient(52% 40% at 12% 5%,var(--mesh1),transparent 60%),
+    radial-gradient(46% 36% at 95% 11%,var(--mesh2),transparent 60%),
+    radial-gradient(72% 52% at 50% 103%,var(--mesh3),transparent 60%);
+}
+
+/* Centered content column. Widen slightly on larger viewports. */
+.wrap{width:100%;max-width:462px;margin:auto;display:flex;flex-direction:column}
+@media(min-width:680px){.wrap{max-width:520px}}
+
+/* ════════════════════════════════════════════════════════════════════════
+   4) TYPOGRAPHY  —  hero, page titles, section labels, body
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* Hero: the one big headline per screen. Tight negative tracking. */
+.hero{margin:30px 4px 26px}
+.hero h1{font-size:34px;font-weight:600;letter-spacing:-.04em;line-height:1.05}
+.hero p{font-size:15.5px;color:var(--ink2);line-height:1.5;margin-top:12px;letter-spacing:-.006em;max-width:36ch}
+
+/* Page title (mid-level screens). */
+.ptitle{font-size:25px;font-weight:600;letter-spacing:-.035em;margin:2px 0 4px}
+.psub{font-size:14px;color:var(--ink2);line-height:1.5;margin-bottom:4px}
+
+/* Section label: small, upper, tracked. Use to head a group of controls. */
+.sect{font-size:12px;font-weight:650;color:var(--ink2);text-transform:uppercase;letter-spacing:.05em;margin:28px 2px 0}
+.sect.tight{margin-top:20px}
+.opt{text-transform:none;letter-spacing:0;font-weight:500;color:var(--ink3)} /* "· optional" suffix */
+
+/* Generic hint / helper text. */
+.hint{color:var(--ink2);font-size:13px;line-height:1.5;margin-top:14px}
+.hint.center{text-align:center}
+.hint.pod{border-left:2px solid var(--cyan);padding-left:11px;color:var(--ink);text-align:left;margin-top:12px}
+
+/* ════════════════════════════════════════════════════════════════════════
+   5) BRAND MARK  —  wordmark + Sonar-ping logo (.echo)
+   Markup: <div class="brand"><b>Subunit</b>
+             <span class="echo"><i></i><i></i><i></i><svg>…</svg></span>
+             <span class="meet">Meet</span></div>
+   The three <i> are the sonar rings (set the SVG accent to --cyan / #06b6d4).
+   ════════════════════════════════════════════════════════════════════════ */
+.brand{display:flex;align-items:center;justify-content:center;gap:9px;font-size:16px;font-weight:600;letter-spacing:.01em;padding:6px 104px 4px;min-height:46px}
+.brand b{font-weight:650}
+.brand .meet{color:var(--cyan-d);font-weight:600}  /* product-name accent piece */
+.brand .echo{position:relative;width:34px;height:34px;display:grid;place-items:center;flex:none}
+.brand .echo svg{position:relative;z-index:1;width:34px;height:34px;filter:drop-shadow(0 3px 9px rgba(6,182,212,.35))}
+
+/* Sonar-ping rings: 3 concentric circles expanding outward on a 6s loop,
+   staggered 2s apart, so a ring is always mid-flight. */
+.brand .echo i{position:absolute;left:50%;top:50%;width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;border:1.5px solid var(--cyan);opacity:0;pointer-events:none;animation:brandping 6s cubic-bezier(.2,.55,.35,1) infinite}
+.brand .echo i:nth-child(2){animation-delay:2s}
+.brand .echo i:nth-child(3){animation-delay:4s}
+@keyframes brandping{0%{transform:scale(.3);opacity:.55}45%{opacity:.18}100%{transform:scale(3.5);opacity:0}}
+@media (prefers-reduced-motion:reduce){.brand .echo i{display:none}}
+
+/* ════════════════════════════════════════════════════════════════════════
+   6) FROSTED-GLASS CARD  —  the base surface for content screens
+   Markup: <div class="card">…</div>  (.center to center text)
+   ════════════════════════════════════════════════════════════════════════ */
+.card{position:relative;background:var(--glass);backdrop-filter:blur(34px) saturate(1.7);-webkit-backdrop-filter:blur(34px) saturate(1.7);border:1px solid var(--glass-edge);border-radius:var(--r);box-shadow:var(--shadow),inset 0 1px 0 var(--rim);padding:26px 24px}
+.card.center{text-align:center}
+
+/* Card / screen header with optional round back button. */
+.hd{display:flex;align-items:center;gap:14px;margin:2px 0 8px}
+.hd .back{width:40px;height:40px;border-radius:13px;flex:none;background:var(--glass);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid var(--line);display:grid;place-items:center;cursor:pointer;color:var(--ink);box-shadow:var(--shadow-sm);font-family:inherit}
+.hd .back svg{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.hd h1{font-size:27px;font-weight:600;letter-spacing:-.035em}
+.hd p{font-size:13px;color:var(--ink2);margin-top:2px}
+
+/* ════════════════════════════════════════════════════════════════════════
+   7) ACTION CARD  —  big tappable row: icon · title · sub · chevron
+   Markup: <button class="action">                (add .alt for a neutral icon)
+             <span class="ic"><svg/></span>
+             <span class="tx"><div class="tt">…</div><div class="ds">…</div></span>
+             <span class="chev"><svg/></span>
+           </button>
+   ════════════════════════════════════════════════════════════════════════ */
+.stack{display:flex;flex-direction:column;gap:14px}  /* vertical list of actions */
+.action{display:flex;align-items:center;gap:16px;text-align:left;width:100%;background:var(--glass);backdrop-filter:blur(34px) saturate(1.7);-webkit-backdrop-filter:blur(34px) saturate(1.7);border:1px solid var(--glass-edge);border-radius:var(--r);box-shadow:var(--shadow),inset 0 1px 0 var(--rim);padding:21px 22px;cursor:pointer;font-family:inherit;color:inherit;transition:transform .26s cubic-bezier(.2,.8,.2,1),box-shadow .26s}
+.action:hover{transform:translateY(-2px);box-shadow:0 34px 70px -28px rgba(18,48,92,.42),inset 0 1px 0 var(--rim)}
+.action:active{transform:translateY(0) scale(.99)}
+.action .ic{width:54px;height:54px;border-radius:16px;flex:none;display:grid;place-items:center;background:linear-gradient(160deg,rgba(6,182,212,.18),rgba(6,182,212,.05));color:var(--cyan-d);box-shadow:inset 0 1px 0 var(--rim-soft)}
+.action.alt .ic{background:linear-gradient(160deg,rgba(18,40,72,.08),rgba(18,40,72,.03));color:var(--ink)}  /* neutral variant */
+.action .ic svg{width:25px;height:25px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.action .tx{flex:1;min-width:0}
+.action .tt{font-size:17.5px;font-weight:600;letter-spacing:-.015em}      /* title  */
+.action .ds{font-size:13.5px;color:var(--ink2);margin-top:3px;line-height:1.42} /* sub */
+.action .chev{color:var(--ink3);flex:none}
+.action .chev svg{width:19px;height:19px;stroke:currentColor;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+
+/* ════════════════════════════════════════════════════════════════════════
+   8) SELECTION TILE  —  multi-up choice card with .sel state + checkmark
+   Markup: <button class="tile sel">
+             <span class="ck"><svg/></span>           (checkmark, shown when .sel)
+             <span class="ic"><svg/></span>
+             <div class="tt">…</div><div class="ds">…</div>
+           </button>
+   Wrap a row in <div class="tiles"> for equal-width columns.
+   ════════════════════════════════════════════════════════════════════════ */
+.tiles{display:flex;gap:11px;margin-top:12px}
+.tile{flex:1;position:relative;background:var(--glass2);backdrop-filter:blur(22px) saturate(1.5);-webkit-backdrop-filter:blur(22px) saturate(1.5);border:1.5px solid var(--line);border-radius:var(--r-sm);padding:16px 14px;cursor:pointer;text-align:left;transition:transform .2s cubic-bezier(.2,.8,.2,1),border-color .2s,background .2s,box-shadow .2s;box-shadow:var(--shadow-sm);font-family:inherit;color:inherit}
+.tile:hover{transform:translateY(-2px)}
+.tile.sel{border-color:var(--cyan);background:rgba(6,182,212,.09);box-shadow:0 14px 30px -14px rgba(6,182,212,.42)}
+.tile .ic{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;background:rgba(6,182,212,.11);color:var(--cyan-d);margin-bottom:11px;transition:.2s}
+.tile.sel .ic{background:linear-gradient(160deg,#22d3ee,#06b6d4);color:#fff;box-shadow:0 8px 18px -7px rgba(6,182,212,.6)}
+.tile .ic svg{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.tile .tt{font-size:14.5px;font-weight:600;letter-spacing:-.01em}
+.tile .ds{font-size:11.5px;color:var(--ink2);margin-top:3px;line-height:1.3}
+.tile .ck{position:absolute;top:12px;right:12px;width:21px;height:21px;border-radius:50%;background:var(--cyan);display:none;place-items:center;box-shadow:0 4px 10px -3px rgba(6,182,212,.6)}
+.tile.sel .ck{display:grid}
+.tile .ck svg{width:12px;height:12px;stroke:#fff;fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
+
+/* Compact segmented number/option picker (single-select pills). */
+.numpick{display:flex;gap:9px;margin-top:12px}
+.numpick button{flex:1;padding:14px 0;border:1.5px solid var(--line);background:var(--glass2);color:var(--ink2);border-radius:14px;font-weight:700;font-size:16px;cursor:pointer;font-family:inherit;box-shadow:var(--shadow-sm);transition:transform .16s cubic-bezier(.2,.8,.2,1),border-color .18s,background .18s,color .18s}
+.numpick button.sel{border-color:var(--cyan);background:rgba(6,182,212,.12);color:var(--cyan-d)}
+.numpick button:active{transform:scale(.94)}
+
+/* ════════════════════════════════════════════════════════════════════════
+   9) BUTTONS  —  primary / ghost / danger  (+ mini)
+   Markup: <button class="btn btn-primary">…</button>
+   ════════════════════════════════════════════════════════════════════════ */
+.cta{margin-top:30px}  /* spacer wrapper before a primary action */
+.btn{width:100%;border:none;border-radius:17px;padding:18px;font-size:16px;font-weight:600;font-family:inherit;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:9px;transition:transform .2s,box-shadow .2s,background .18s,border-color .18s,color .18s,opacity .18s;letter-spacing:-.01em;margin-top:16px}
+.btn-primary{background:linear-gradient(180deg,#1fc8e4,#06b6d4);color:#fff;box-shadow:0 16px 32px -11px rgba(6,182,212,.55),inset 0 1px 0 var(--rim-cta)}
+.btn-primary:hover{transform:translateY(-1px);box-shadow:0 20px 38px -11px rgba(6,182,212,.6),inset 0 1px 0 var(--rim-cta)}
+.btn-primary:active{transform:scale(.985)}
+.btn-primary:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none}
+.btn-primary svg{width:19px;height:19px;stroke:#fff;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.btn-ghost{background:var(--glass2);color:var(--ink);border:1px solid var(--line);box-shadow:var(--shadow-sm)}
+.btn-ghost:hover{background:var(--fill-ghost-hover);border-color:var(--line2)}
+.btn-ghost:active{transform:scale(.985)}
+.btn-danger{background:linear-gradient(180deg,#fb5d7e,#e11d48);color:#fff;box-shadow:0 16px 32px -12px rgba(225,29,72,.5),inset 0 1px 0 var(--rim-danger)}
+.btn-danger:hover{transform:translateY(-1px)}
+.btn-danger:active{transform:scale(.985)}
+.btn svg.stroke{stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;width:19px;height:19px}
+.minibtn{width:auto;padding:13px 15px;font-size:14px;border-radius:13px;margin-top:0}  /* inline-size button */
+.err{color:#be123c;font-size:13px;min-height:18px;margin-top:12px;text-align:center}
+
+/* ════════════════════════════════════════════════════════════════════════
+   10) FIELDS  —  text input / select, + the read-only "picker" row
+   Markup: <input class="fld">  ·  <select class="fld">  ·  <div class="picker">
+   ════════════════════════════════════════════════════════════════════════ */
+.fld{width:100%;background:var(--fill-strong);border:1px solid var(--line);border-radius:15px;padding:16px;font-size:16px;color:var(--ink);margin-top:12px;outline:none;font-family:inherit;transition:.18s;box-shadow:var(--shadow-sm)}
+.fld::placeholder{color:var(--ink3)}
+.fld:focus{border-color:var(--cyan);box-shadow:0 0 0 4px rgba(6,182,212,.13);background:var(--fill-focus)}  /* cyan focus ring */
+.fld.code{text-align:center;font-size:34px;letter-spacing:.32em;font-weight:700;padding-left:.32em;color:var(--cyan-d)}  /* big code entry */
+/* Custom chevron for <select> (no native arrow). */
+select.fld{cursor:pointer;-webkit-appearance:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2393a1b4' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 16px center;padding-right:40px}
+/* Native option list legibility in both themes. */
+select.fld option{background:var(--option-bg);color:var(--ink)}
+
+/* Picker: a read-only field-styled row that opens a menu/sheet. */
+.picker{width:100%;display:flex;align-items:center;gap:11px;background:var(--fill-strong);border:1px solid var(--line);border-radius:15px;padding:15px 16px;margin-top:12px;cursor:pointer;box-shadow:var(--shadow-sm)}
+.picker .pi{color:var(--cyan-d)}  /* leading icon */
+.picker .pi svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8}
+.picker .pl{flex:1;font-size:16px}  /* label */
+.picker .pc{color:var(--ink3)}      /* trailing chevron */
+.picker .pc svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+
+/* ════════════════════════════════════════════════════════════════════════
+   11) PILLS / BADGES  —  small status tags
+   Markup: <span class="pill live|wait|gone">…</span>
+   ════════════════════════════════════════════════════════════════════════ */
+.pill{font-size:10px;font-weight:700;padding:5px 11px;border-radius:30px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+.pill.live{background:var(--ok-bg);color:var(--ok);box-shadow:inset 0 0 0 1px var(--ok-line)}
+.pill.wait{background:var(--amber-bg);color:var(--amber)}
+.pill.gone{background:rgba(88,107,130,.12);color:var(--ink2)}
+/* Small cyan badge (e.g. "you" / count chip). */
+.badge{font-size:10px;background:rgba(6,182,212,.14);color:var(--cyan-d);padding:1px 8px;border-radius:999px;font-weight:700;letter-spacing:.04em}
+
+/* List rows on glass (e.g. participants). */
+.list{list-style:none;margin:12px 0 0;display:flex;flex-direction:column;gap:8px;padding:0}
+.list li{display:flex;align-items:center;gap:10px;padding:13px 15px;border:1px solid var(--line);border-radius:14px;font-size:14.5px;background:var(--fill-weak);box-shadow:var(--shadow-sm)}
+.list li .nm{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+.list li.empty{color:var(--ink3);border-style:dashed;background:transparent;box-shadow:none;justify-content:center}
+
+/* ════════════════════════════════════════════════════════════════════════
+   12) GLASS CHIPS  —  fixed corner controls (lang switch + theme toggle)
+   Markup: <div class="chip">…</div>  ·  <button class="themetog">…</button>
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* Generic glass chip — a rounded translucent pill, used here top-left for a
+   language switcher. Pin it with position:fixed in your layout if needed. */
+.chip{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:999px;background:var(--glass);backdrop-filter:blur(20px) saturate(1.5);-webkit-backdrop-filter:blur(20px) saturate(1.5);border:1px solid var(--line);font-size:12px;font-weight:600;color:var(--ink);box-shadow:var(--shadow-sm);cursor:pointer;font-family:inherit}
+.chip svg{width:13px;height:13px;stroke:var(--ink2);fill:none;stroke-width:1.8;flex:none}
+
+/* Dropdown menu that hangs off a chip. */
+.chip-menu{position:absolute;top:calc(100% + 6px);left:0;min-width:152px;background:var(--menu-bg);backdrop-filter:blur(24px) saturate(1.6);-webkit-backdrop-filter:blur(24px) saturate(1.6);border:1px solid var(--line);border-radius:14px;padding:5px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:2px}
+.chip-menu button{display:block;width:100%;text-align:left;padding:9px 12px;border-radius:9px;border:0;background:transparent;color:var(--ink);font-size:13.5px;cursor:pointer;font-family:inherit;transition:background .12s}
+.chip-menu button:hover{background:rgba(6,182,212,.08)}
+.chip-menu button.on{background:rgba(6,182,212,.13);color:var(--cyan-d);font-weight:600}
+
+/* Theme toggle: same glass pill, square-ish, swaps sun/moon glyph by theme.
+   Markup: <button class="themetog">
+             <svg class="ic-moon">…</svg>   (shown in LIGHT — "switch to dark")
+             <svg class="ic-sun">…</svg>    (shown in DARK  — "switch to light")
+           </button> */
+.themetog{display:flex;align-items:center;justify-content:center;width:38px;height:34px;padding:0;border-radius:999px;background:var(--glass);backdrop-filter:blur(20px) saturate(1.5);-webkit-backdrop-filter:blur(20px) saturate(1.5);border:1px solid var(--line);color:var(--ink);box-shadow:var(--shadow-sm);cursor:pointer;font-family:inherit;transition:transform .16s cubic-bezier(.2,.8,.2,1),background .2s,border-color .2s}
+.themetog:hover{border-color:var(--line2)}
+.themetog:active{transform:scale(.92)}
+.themetog svg{width:17px;height:17px;stroke:var(--ink2);fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.themetog .ic-moon{display:var(--tg-moon)}  /* token-driven glyph swap */
+.themetog .ic-sun{display:var(--tg-sun)}
+html.dark .themetog svg{stroke:var(--cyan)}
+
+/* Optional account avatar chip (gradient initial). */
+.acctchip{display:inline-flex;align-items:center;gap:0;padding:4px;border-radius:999px;background:var(--glass);backdrop-filter:blur(20px) saturate(1.5);-webkit-backdrop-filter:blur(20px) saturate(1.5);border:1px solid var(--line);text-decoration:none;color:var(--ink);font-size:12px;box-shadow:var(--shadow-sm)}
+.acctchip .ini{width:26px;height:26px;border-radius:50%;background:linear-gradient(160deg,#22d3ee,#06b6d4);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;flex:none;box-shadow:0 4px 10px -3px rgba(6,182,212,.5)}
+
+/* ════════════════════════════════════════════════════════════════════════
+   13) TOGGLE SWITCH  —  iOS-style on/off
+   Markup: <label class="switch"><input type="checkbox"><span class="track"></span></label>
+   ════════════════════════════════════════════════════════════════════════ */
+.switch{position:relative;display:inline-block;width:40px;height:23px;flex:none;cursor:pointer}
+.switch input{opacity:0;width:0;height:0;position:absolute}
+.switch .track{position:absolute;inset:0;background:var(--tog-off);border-radius:999px;transition:.16s}
+.switch .track:before{content:"";position:absolute;width:17px;height:17px;left:3px;top:3px;background:var(--tog-knob);border-radius:50%;transition:.16s;box-shadow:0 1px 3px var(--tog-knob-sh)}
+.switch input:checked + .track{background:var(--cyan)}
+.switch input:checked + .track:before{transform:translateX(17px)}
+
+/* ════════════════════════════════════════════════════════════════════════
+   14) CODE BOX  —  highlighted display block (e.g. a join code)
+   ════════════════════════════════════════════════════════════════════════ */
+.codebox{text-align:center;margin:22px 0 16px;background:rgba(6,182,212,.06);border:1px solid rgba(6,182,212,.2);border-radius:var(--r-sm);padding:20px 16px;box-shadow:var(--shadow-sm)}
+.codelbl{color:var(--ink2);font-size:11px;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px;font-weight:650}
+.codebig{font-size:46px;font-weight:700;letter-spacing:.14em;color:var(--cyan-d);cursor:pointer;transition:transform .14s,color .2s;padding-left:.14em}
+.codebig:active{transform:scale(.97)}
+/* QR plate stays white in both themes for scanner contrast. */
+.qr{display:grid;place-items:center;margin:16px auto;padding:14px;background:var(--qr-bg);border-radius:16px;width:fit-content;box-shadow:var(--shadow)}
+
+/* Info callout (icon + heading + body) on a tinted glass panel. */
+.callout{display:flex;gap:13px;align-items:flex-start;background:linear-gradient(160deg,rgba(6,182,212,.1),rgba(6,182,212,.03));border:1px solid rgba(6,182,212,.2);border-radius:var(--r-sm);padding:16px 18px;margin:18px 0 0;box-shadow:var(--shadow-sm)}
+.callout svg{width:24px;height:24px;stroke:var(--cyan-d);fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;flex:none;margin-top:1px}
+.callout b{display:block;color:var(--ink);font-size:15px;font-weight:650;margin-bottom:3px}
+.callout span{font-size:13.5px;color:var(--ink2);line-height:1.5}
+
+/* ════════════════════════════════════════════════════════════════════════
+   15) SEGMENTED CONTROL  —  two-way toggle with sliding indicator
+   Markup: <div class="seg"><div class="seg-ind"></div>
+             <button class="seg-btn active">A</button><button class="seg-btn">B</button></div>
+   Add .tr on .seg to slide the indicator to the second option.
+   ════════════════════════════════════════════════════════════════════════ */
+.seg{position:relative;display:flex;background:var(--fill-weak);border:1px solid var(--line);border-radius:15px;padding:5px;margin:6px 0 18px;box-shadow:var(--shadow-sm)}
+.seg-btn{flex:1;padding:13px;border:none;background:transparent;color:var(--ink2);font-weight:600;font-size:14.5px;letter-spacing:-.005em;cursor:pointer;z-index:1;transition:color .22s;margin:0;border-radius:11px;font-family:inherit}
+.seg-btn.active{color:#fff}
+.seg-ind{position:absolute;top:5px;bottom:5px;left:5px;width:calc(50% - 5px);background:linear-gradient(160deg,#22d3ee,#06b6d4);border-radius:11px;transition:transform .34s cubic-bezier(.32,.72,0,1);box-shadow:0 8px 18px -7px rgba(6,182,212,.55)}
+.seg.tr .seg-ind{transform:translateX(100%)}
+
+/* ════════════════════════════════════════════════════════════════════════
+   16) ICON BUTTON BAR  —  circular icon actions with captions
+   Markup: <div class="actbar"><button class="iconbtn">
+             <span class="ic"><svg/></span><span class="cap">…</span></button></div>
+   ════════════════════════════════════════════════════════════════════════ */
+.actbar{display:flex;gap:16px;margin-top:28px;justify-content:center;flex-wrap:wrap}
+.iconbtn{display:inline-flex;flex-direction:column;align-items:center;gap:8px;background:none;border:none;cursor:pointer;margin:0;padding:0;width:auto;font-family:inherit}
+.iconbtn .ic{width:54px;height:54px;border-radius:50%;border:1px solid var(--line);background:var(--fill-mid);display:inline-flex;align-items:center;justify-content:center;transition:.2s;box-shadow:var(--shadow-sm)}
+.iconbtn:hover .ic{border-color:var(--cyan);background:rgba(6,182,212,.1);transform:translateY(-3px);box-shadow:0 14px 26px -10px rgba(6,182,212,.5)}
+.iconbtn:active .ic{transform:scale(.92)}
+.iconbtn .ic svg{width:22px;height:22px;stroke:var(--ink);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.iconbtn .cap{font-size:11px;color:var(--ink2);font-weight:600;letter-spacing:.01em}
+.iconbtn.done .ic{border-color:var(--ok);background:var(--ok-bg)}
+.iconbtn.done .ic svg{stroke:var(--ok)}
+.iconbtn.done .cap{color:var(--ok)}
+
+/* ════════════════════════════════════════════════════════════════════════
+   17) MODALS  —  bottom-sheet (mobile) → centered dialog (desktop) + scrim
+   Markup: <div class="modal"><div class="modal-bg"></div>
+             <div class="modal-card">…<button class="modal-x">×</button></div></div>
+   ════════════════════════════════════════════════════════════════════════ */
+.modal{position:fixed;inset:0;z-index:200;display:flex;align-items:flex-end;justify-content:center}
+.modal-bg{position:absolute;inset:0;background:var(--scrim);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);animation:modalbg .25s ease}
+.modal-card{position:relative;width:100%;max-width:560px;max-height:86vh;overflow-y:auto;background:var(--menu-bg);backdrop-filter:blur(34px) saturate(1.7);-webkit-backdrop-filter:blur(34px) saturate(1.7);border:1px solid var(--glass-edge2);border-radius:26px 26px 0 0;padding:26px 22px max(28px,env(safe-area-inset-bottom));box-shadow:0 -22px 60px -22px rgba(18,48,92,.45);animation:modalup .36s cubic-bezier(.2,.8,.2,1)}
+@media(min-width:600px){.modal{align-items:center;padding:20px}.modal-card{border-radius:26px;animation:modalpop .3s cubic-bezier(.2,.8,.2,1)}}
+@keyframes modalbg{from{opacity:0}to{opacity:1}}
+@keyframes modalup{from{transform:translateY(100%)}to{transform:none}}
+@keyframes modalpop{from{opacity:0;transform:scale(.96) translateY(8px)}to{opacity:1;transform:none}}
+.modal-x{position:absolute;top:14px;right:14px;width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:var(--fill-soft);color:var(--ink2);font-size:14px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0;margin:0;font-family:inherit}
+
+/* ════════════════════════════════════════════════════════════════════════
+   18) UTILITIES & MOTION
+   ════════════════════════════════════════════════════════════════════════ */
+.spinner{width:36px;height:36px;border:3px solid var(--line);border-top-color:var(--cyan);border-radius:50%;animation:spin 1s linear infinite;margin:24px auto}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+[hidden]{display:none!important}
+
+/* Keyboard focus ring — cyan, offset (only for keyboard nav). */
+button:focus-visible,.codebig:focus-visible,.seg-btn:focus-visible,.tile:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
+
+/* Respect reduced-motion: near-instant transitions, no looping animation. */
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.09s!important}
+}

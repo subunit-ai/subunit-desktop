@@ -54,6 +54,8 @@ reqwest = { version = "0.12", default-features = false, features = [
 # Async runtime — the periodic update-check loop in lib.rs uses tokio::time::sleep
 # on Tauri's async runtime (which is tokio under the hood).
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+# Local PTY terminals (terminal.rs) — plugins spawn + drive real shells/claude.
+portable-pty = "0.8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.9"

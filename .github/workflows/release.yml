@@ -1,0 +1,55 @@
+name: release
+
+# Tag a version (e.g. v0.1.0) → build a signed macOS app + DMG, publish the GitHub
+# Release, and write the updater manifest (latest.json). The running app auto-updates
+# from /releases/latest/download/latest.json (minisign-verified). macOS only for now
+# (TJ tests on the Mac); add linux/windows matrix rows later if needed.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    runs-on: macos-14   # Apple Silicon (arm64)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - run: bun install
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater signing (minisign). Public key is in src-tauri/tauri.conf.json.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS stays ad-hoc signed ("-" from tauri.conf) — Gatekeeper needs
+          # right-click → Open on first launch; the updater bundle is minisign-signed.
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Subunit Desktop ${{ github.ref_name }}"
+          releaseBody: "Subunit Desktop — Atlas + Synapse + Chat/Call/Echo. Auto-updating. First launch: right-click the app → Open (ad-hoc signed)."
+          # Single platform → publish directly (no multi-platform latest.json race).
+          releaseDraft: false
+          prerelease: false
+          args: "--target aarch64-apple-darwin"

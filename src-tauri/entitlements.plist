@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Embedded into the ad-hoc code signature on macOS (bundle.macOS.entitlements).
+	  Tauri's ad-hoc signing enables the Hardened Runtime on Apple Silicon. The
+	  shell hosts the Chat/Call/Echo web surfaces which may request the camera or
+	  microphone via WKWebView getUserMedia; these entitlements PERMIT the attempt
+	  (Info.plist usage strings explain WHY to the user — both are required). No
+	  App Sandbox (internal, un-notarized distribution).
+	-->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<key>com.apple.security.device.camera</key>
+	<true/>
+</dict>
+</plist>

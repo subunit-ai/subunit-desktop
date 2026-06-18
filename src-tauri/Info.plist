@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Merged into the generated Info.plist by the Tauri CLI on macOS. Without these
+	  usage strings macOS TCC silently kills the process the instant a hosted
+	  surface touches the mic/camera (e.g. the Call module's WKWebView getUserMedia).
+	-->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Subunit benötigt Mikrofonzugriff für Calls und Sprachaufnahmen.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Subunit benötigt Kamerazugriff für Video-Calls.</string>
+</dict>
+</plist>

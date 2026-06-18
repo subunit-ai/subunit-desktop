@@ -1,0 +1,833 @@
+/* Atlas typefaces — Space Grotesk (display) + IBM Plex Mono (mono). The shell
+   index.html doesn't preload these, so the module carries them itself; the
+   @theme below binds them to --font-display / --font-mono. Must precede the
+   tailwindcss import (which expands to rules) per the CSS @import ordering rule. */
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+@import 'tailwindcss';
+
+/* ============================================================
+   ATLAS — Design Tokens (Tailwind v4 @theme)
+   Deep-space navy. Twin luminescence: violet (orbit/atmosphere)
+   + cyan (signal/active). Knowledge-compass / navigation system.
+
+   The token + utility base below is inherited VERBATIM from the Atlas
+   landing prototype (atlas-landingpage-react/src/index.css) so the web
+   app, desktop shell and iOS surfaces all read as one brand. App-only
+   component classes for the query/ingest surfaces are appended at the
+   very end under `@layer components` (see "ATLAS APP SURFACES").
+   ============================================================ */
+@theme {
+  /* Surfaces — near-black → faint violet-navy depth */
+  --color-base: #080808;
+  --color-base-2: #0a0a12;
+  --color-surface: #0e0e1c;
+  --color-surface-2: #14143a;
+  --color-surface-3: #1b1b46;
+
+  /* Ink */
+  --color-ink: #eaf0ff;
+  --color-ink-muted: #9aa3c4;
+  --color-ink-dim: #5f6791;
+
+  /* Accent — cyan signal */
+  --color-cyan: #00f2ff;
+  --color-cyan-deep: #06b6d4;
+  --color-cyan-soft: #7df6ff;
+
+  /* Accent — violet orbit (now a co-lead, per moodboard) */
+  --color-violet: #8b5cf6;
+  --color-violet-deep: #7c3aed;
+  --color-violet-soft: #a78bff;
+
+  /* Hairlines */
+  --color-line: rgba(140, 160, 255, 0.1);
+  --color-line-strong: rgba(0, 242, 255, 0.22);
+  --color-line-violet: rgba(139, 92, 246, 0.28);
+
+  /* Type */
+  --font-display: 'Space Grotesk', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* Motion */
+  --animate-float: float 9s ease-in-out infinite;
+  --animate-float-slow: float 15s ease-in-out infinite;
+  --animate-spin-slow: spinSlow 120s linear infinite;
+  --animate-spin-slower: spinSlow 220s linear infinite reverse;
+  --animate-orbit: orbitSpin 48s linear infinite;
+  --animate-orbit-rev: orbitSpin 70s linear infinite reverse;
+  --animate-pulse-glow: pulseGlow 5s ease-in-out infinite;
+  --animate-twinkle: twinkle 4s ease-in-out infinite;
+  --animate-rise: rise 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-draw: draw 2.4s ease-in-out forwards;
+  --animate-horizon: horizonBreath 7s ease-in-out infinite;
+}
+
+/* ============================================================
+   Base
+   ============================================================ */
+@layer base {
+  * {
+    border-color: var(--color-line);
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-base);
+    color: var(--color-ink);
+    font-family: var(--font-display);
+    overflow-x: hidden;
+    /* Restrained atmosphere — one faint violet breath, top-left. Sections
+       own their own glow so the page stays dark and focused. */
+    background-image:
+      radial-gradient(820px 560px at 15% -8%, rgba(124, 58, 237, 0.1), transparent 60%);
+    background-attachment: fixed;
+  }
+
+  ::selection {
+    background: rgba(139, 92, 246, 0.32);
+    color: #fff;
+  }
+
+  /* Cyan→violet slim scrollbar */
+  ::-webkit-scrollbar {
+    width: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--color-base);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: linear-gradient(var(--color-cyan-deep), var(--color-violet-deep));
+    border-radius: 99px;
+    border: 2px solid var(--color-base);
+  }
+}
+
+/* ============================================================
+   Components — premium primitives
+   ============================================================ */
+@layer components {
+  .container-x {
+    width: 100%;
+    max-width: 1200px;
+    margin-inline: auto;
+    padding-inline: 1.5rem;
+  }
+
+  /* Mono eyebrow / kicker label */
+  .kicker {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 500;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    color: var(--color-cyan);
+    text-shadow: 0 0 18px rgba(0, 242, 255, 0.5);
+  }
+
+  /* Pill badge with hairline + glow */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.4rem 0.9rem;
+    border-radius: 999px;
+    border: 1px solid var(--color-line-violet);
+    background: rgba(139, 92, 246, 0.06);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--color-ink-muted);
+    backdrop-filter: blur(8px);
+  }
+
+  /* Glass card with gradient hairline border + hover lift */
+  .glass {
+    position: relative;
+    border-radius: 1.25rem;
+    background:
+      linear-gradient(180deg, rgba(20, 20, 58, 0.7), rgba(9, 9, 19, 0.55));
+    border: 1px solid var(--color-line);
+    backdrop-filter: blur(14px);
+    box-shadow:
+      0 1px 0 0 rgba(255, 255, 255, 0.04) inset,
+      0 30px 60px -30px rgba(2, 4, 20, 0.9);
+    transition:
+      transform 0.5s cubic-bezier(0.16, 1, 0.3, 1),
+      border-color 0.5s ease,
+      box-shadow 0.5s ease;
+  }
+  .glass:hover {
+    transform: translateY(-6px);
+    border-color: var(--color-line-violet);
+    box-shadow:
+      0 1px 0 0 rgba(139, 92, 246, 0.2) inset,
+      0 40px 80px -32px rgba(0, 0, 0, 0.95),
+      0 0 60px -22px rgba(139, 92, 246, 0.45);
+  }
+
+  /* Primary CTA — cyan, glowing */
+  .btn-primary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.85rem 1.6rem;
+    border-radius: 0.85rem;
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: #03121a;
+    background: linear-gradient(180deg, #5cf6ff, var(--color-cyan) 40%, var(--color-cyan-deep));
+    box-shadow:
+      0 0 0 1px rgba(0, 242, 255, 0.5),
+      0 8px 30px -8px rgba(0, 242, 255, 0.6),
+      0 0 50px -12px rgba(0, 242, 255, 0.55);
+    transition: transform 0.25s ease, box-shadow 0.25s ease, filter 0.25s ease;
+  }
+  .btn-primary:hover {
+    transform: translateY(-2px);
+    filter: brightness(1.08);
+    box-shadow:
+      0 0 0 1px rgba(0, 242, 255, 0.7),
+      0 12px 40px -8px rgba(0, 242, 255, 0.7),
+      0 0 70px -10px rgba(0, 242, 255, 0.65);
+  }
+
+  /* Signature CTA — violet→cyan gradient ("Start your journey") */
+  .btn-violet {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.95rem 1.8rem;
+    border-radius: 0.9rem;
+    font-weight: 600;
+    font-size: 1rem;
+    color: #fff;
+    background: linear-gradient(105deg, var(--color-violet-deep) 0%, var(--color-violet) 45%, var(--color-cyan-deep) 100%);
+    box-shadow:
+      0 0 0 1px rgba(167, 139, 255, 0.5),
+      0 10px 36px -8px rgba(124, 58, 237, 0.7),
+      0 0 60px -14px rgba(0, 242, 255, 0.45);
+    transition: transform 0.28s ease, box-shadow 0.28s ease, filter 0.28s ease;
+    overflow: hidden;
+  }
+  .btn-violet::after {
+    /* sheen sweep */
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(105deg, transparent 30%, rgba(255, 255, 255, 0.22) 50%, transparent 70%);
+    transform: translateX(-120%);
+    transition: transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .btn-violet:hover {
+    transform: translateY(-2px);
+    filter: brightness(1.07);
+    box-shadow:
+      0 0 0 1px rgba(167, 139, 255, 0.8),
+      0 16px 48px -8px rgba(124, 58, 237, 0.85),
+      0 0 90px -12px rgba(0, 242, 255, 0.55);
+  }
+  .btn-violet:hover::after {
+    transform: translateX(120%);
+  }
+
+  /* Secondary CTA — ghost */
+  .btn-ghost {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.95rem 1.6rem;
+    border-radius: 0.9rem;
+    font-weight: 500;
+    font-size: 0.95rem;
+    color: var(--color-ink);
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--color-line-violet);
+    backdrop-filter: blur(8px);
+    transition: transform 0.25s ease, border-color 0.25s ease, background 0.25s ease;
+  }
+  .btn-ghost:hover {
+    transform: translateY(-2px);
+    border-color: rgba(167, 139, 255, 0.55);
+    background: rgba(139, 92, 246, 0.08);
+  }
+
+  /* Section heading scale */
+  .h-section {
+    font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.05;
+    font-size: clamp(2rem, 4.5vw, 3.25rem);
+    /* faint depth halo lifts the heading off the near-black ground */
+    text-shadow: 0 0 42px rgba(124, 58, 237, 0.14);
+  }
+
+  /* Constellation hover — lines draw themselves between star nodes.
+     Edges use pathLength="1" so one dashoffset rule fits every length. */
+  .constellation-edge {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    opacity: 0;
+    transition:
+      stroke-dashoffset 0.7s cubic-bezier(0.16, 1, 0.3, 1),
+      opacity 0.45s ease;
+  }
+  .group:hover .constellation-edge,
+  .group:focus-within .constellation-edge {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+  .constellation-node {
+    opacity: 0.38;
+    transition: opacity 0.5s ease, transform 0.5s ease;
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+  .group:hover .constellation-node,
+  .group:focus-within .constellation-node {
+    opacity: 1;
+    transform: scale(1.35);
+  }
+
+  /* Discovery Journey — a constellation path wiring the four steps
+     (Orient → Explore → Connect → Advance). The gradient line draws itself
+     once the section scrolls into view; the waypoint stars then ignite along
+     it. pathLength="1" normalises the dash maths across the zig-zag. */
+  .journey-edge {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    transition: stroke-dashoffset 1.8s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .journey-constellation.is-drawn .journey-edge {
+    stroke-dashoffset: 0;
+  }
+  .journey-waypoint {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.3);
+    transition:
+      opacity 0.7s ease,
+      transform 0.7s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .journey-constellation.is-drawn .journey-waypoint {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+/* ============================================================
+   Utilities
+   ============================================================ */
+@layer utilities {
+  /* Cyan→violet gradient text */
+  .text-gradient {
+    background: linear-gradient(100deg, #ffffff 0%, var(--color-cyan) 46%, var(--color-violet-soft) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* Signature "knowledge" gradient — violet (#7c3aed) → cyan (#06b6d4),
+     lifted slightly for luminance on the near-black ground. The twin
+     drop-shadow casts a soft violet→cyan aura off the glyph shapes
+     (text-shadow can't reach background-clipped text, so filter it is). */
+  .text-gradient-vc {
+    background: linear-gradient(102deg, #a78bff 0%, #7c3aed 34%, #0fbdd6 78%, #2fdcef 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    filter:
+      drop-shadow(0 0 24px rgba(124, 58, 237, 0.38))
+      drop-shadow(0 0 48px rgba(6, 182, 212, 0.22));
+  }
+
+  .text-glow {
+    text-shadow:
+      0 0 24px rgba(0, 242, 255, 0.5),
+      0 0 60px rgba(139, 92, 246, 0.35);
+  }
+  .text-glow-violet {
+    text-shadow:
+      0 0 24px rgba(139, 92, 246, 0.6),
+      0 0 60px rgba(124, 58, 237, 0.4);
+  }
+
+  /* Faint hairline grid backdrop (hero) */
+  .bg-grid {
+    background-image:
+      linear-gradient(rgba(140, 160, 255, 0.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(140, 160, 255, 0.045) 1px, transparent 1px);
+    background-size: 64px 64px;
+    -webkit-mask-image: radial-gradient(ellipse 75% 65% at 50% 40%, #000 55%, transparent 100%);
+    mask-image: radial-gradient(ellipse 75% 65% at 50% 40%, #000 55%, transparent 100%);
+  }
+
+  /* Deep-space universe ground — a whole-page depth layer. Near-black base
+     with a few very faint violet/cyan nebula blooms in the corners and a soft
+     vignette that deepens toward the edges. No grid lines — just atmosphere
+     and distance, so the page reads as a dark cosmos behind the starfield. */
+  .bg-universe {
+    background-color: #060610;
+    background-image:
+      radial-gradient(58% 48% at 16% 10%, rgba(124, 58, 237, 0.12), transparent 62%),
+      radial-gradient(52% 42% at 86% 16%, rgba(0, 242, 255, 0.07), transparent 60%),
+      radial-gradient(60% 52% at 78% 88%, rgba(139, 92, 246, 0.08), transparent 64%),
+      radial-gradient(70% 60% at 28% 82%, rgba(6, 182, 212, 0.05), transparent 66%),
+      radial-gradient(130% 100% at 50% 44%, transparent 52%, rgba(2, 2, 8, 0.72) 100%);
+  }
+
+  /* Perspective floor — a Tron/synthwave grid receding toward the horizon.
+     The parent supplies `perspective`; this layer simply lies flat (rotateX)
+     and recedes. Near edge (bottom) is wide; the far edge converges upward at
+     the horizon line. Fades out toward the distance. */
+  .perspective-grid {
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(182, 150, 255, 0.75) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(150, 110, 255, 0.55) 1px, transparent 1px);
+    background-size: 40px 40px;
+    transform: rotateX(64deg);
+    transform-origin: center bottom;
+    -webkit-mask-image: linear-gradient(to top, #000 0%, #000 45%, transparent 94%);
+    mask-image: linear-gradient(to top, #000 0%, #000 45%, transparent 94%);
+    animation: gridFlow 6s linear infinite;
+  }
+
+  /* CTA perspective floor — a subtle Tron grid receding to the horizon arc.
+     The parent supplies `perspective`; this lies flat (rotateX) and recedes.
+     Low-opacity violet lines, masked so they fade out toward the arc (top). */
+  .cta-grid-floor {
+    background-image:
+      linear-gradient(rgba(160, 130, 255, 0.3) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(150, 120, 255, 0.22) 1px, transparent 1px);
+    background-size: 46px 46px;
+    transform: rotateX(74deg);
+    transform-origin: center bottom;
+    -webkit-mask-image: linear-gradient(to top, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.55) 30%, transparent 82%);
+    mask-image: linear-gradient(to top, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.55) 30%, transparent 82%);
+    animation: gridFlow 9s linear infinite;
+  }
+
+  /* Luminous horizon arc — the glowing band where floor meets sky */
+  .horizon-glow {
+    background:
+      radial-gradient(78% 145% at 50% 120%,
+        rgba(0, 242, 255, 0.30) 0%,
+        rgba(70, 150, 255, 0.24) 24%,
+        rgba(139, 92, 246, 0.26) 46%,
+        rgba(124, 58, 237, 0.12) 66%,
+        transparent 82%);
+    filter: blur(34px);
+  }
+  .horizon-line {
+    background: linear-gradient(90deg, transparent, var(--color-violet) 28%, #bfe9ff 50%, var(--color-cyan) 72%, transparent);
+    box-shadow:
+      0 0 18px 1px rgba(139, 92, 246, 0.7),
+      0 0 42px 4px rgba(0, 242, 255, 0.45);
+  }
+
+  .divider-line {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--color-line-strong), transparent);
+  }
+
+  /* Scroll-reveal initial state (paired with IntersectionObserver) */
+  .reveal {
+    opacity: 0;
+    transform: translateY(26px);
+    transition:
+      opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1),
+      transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .reveal.is-visible {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ============================================================
+   Keyframes
+   ============================================================ */
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-14px); }
+}
+@keyframes spinSlow {
+  to { transform: rotate(360deg); }
+}
+@keyframes orbitSpin {
+  to { transform: rotate(360deg); }
+}
+@keyframes pulseGlow {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+@keyframes twinkle {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+@keyframes rise {
+  from { opacity: 0; transform: translateY(30px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes draw {
+  to { stroke-dashoffset: 0; }
+}
+@keyframes horizonBreath {
+  0%, 100% { opacity: 0.75; transform: scaleX(0.96); }
+  50% { opacity: 1; transform: scaleX(1.04); }
+}
+/* Perspective grid drifting toward the viewer (one tile = 50px) */
+@keyframes gridFlow {
+  from { background-position: 50% 0; }
+  to { background-position: 50% 50px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ============================================================
+   ATLAS APP SURFACES — query/ingest component classes
+   (web-app-only; not part of the landing prototype)
+   ============================================================ */
+@layer components {
+  /* App shell grid: fixed sidebar rail + scrollable main column. */
+  .app-shell {
+    display: grid;
+    grid-template-columns: 272px 1fr;
+    min-height: 100dvh;
+  }
+  @media (max-width: 880px) {
+    .app-shell {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  /* Left navigation rail */
+  .rail {
+    position: relative;
+    border-right: 1px solid var(--color-line);
+    background: linear-gradient(180deg, rgba(14, 14, 28, 0.72), rgba(8, 8, 16, 0.5));
+    backdrop-filter: blur(14px);
+    padding: 1.25rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  .rail-item {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.6rem 0.8rem;
+    border-radius: 0.7rem;
+    color: var(--color-ink-muted);
+    font-size: 0.92rem;
+    font-weight: 500;
+    border: 1px solid transparent;
+    transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+    cursor: pointer;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+  }
+  .rail-item:hover {
+    color: var(--color-ink);
+    background: rgba(139, 92, 246, 0.06);
+  }
+  .rail-item.is-active {
+    color: var(--color-ink);
+    background: rgba(139, 92, 246, 0.12);
+    border-color: var(--color-line-violet);
+  }
+
+  /* The ask composer — the central knowledge-query bar */
+  .composer {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.75rem;
+    border-radius: 1.1rem;
+    border: 1px solid var(--color-line-violet);
+    background: linear-gradient(180deg, rgba(20, 20, 58, 0.55), rgba(9, 9, 19, 0.6));
+    backdrop-filter: blur(14px);
+    padding: 0.85rem 0.95rem;
+    box-shadow:
+      0 1px 0 0 rgba(255, 255, 255, 0.04) inset,
+      0 24px 50px -30px rgba(2, 4, 20, 0.9);
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  }
+  .composer:focus-within {
+    border-color: rgba(167, 139, 255, 0.6);
+    box-shadow:
+      0 1px 0 0 rgba(139, 92, 246, 0.2) inset,
+      0 0 0 1px rgba(0, 242, 255, 0.18),
+      0 28px 60px -28px rgba(124, 58, 237, 0.6);
+  }
+  .composer textarea {
+    flex: 1;
+    resize: none;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--color-ink);
+    font-family: var(--font-display);
+    font-size: 1.02rem;
+    line-height: 1.5;
+    max-height: 220px;
+  }
+  .composer textarea::placeholder {
+    color: var(--color-ink-dim);
+  }
+
+  /* A streamed answer bubble */
+  .answer {
+    border-radius: 1.1rem;
+    border: 1px solid var(--color-line);
+    background: linear-gradient(180deg, rgba(20, 20, 58, 0.5), rgba(9, 9, 19, 0.45));
+    padding: 1.25rem 1.4rem;
+    line-height: 1.7;
+    color: var(--color-ink);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  /* Inline citation chip [n] — superscript reference into the source list */
+  .cite-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.25rem;
+    height: 1.25rem;
+    padding: 0 0.3rem;
+    margin: 0 0.12rem;
+    border-radius: 0.4rem;
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: var(--color-cyan);
+    background: rgba(0, 242, 255, 0.1);
+    border: 1px solid var(--color-line-strong);
+    cursor: pointer;
+    vertical-align: baseline;
+    transition: background 0.2s ease, transform 0.15s ease;
+  }
+  .cite-chip:hover {
+    background: rgba(0, 242, 255, 0.2);
+    transform: translateY(-1px);
+  }
+
+  /* Source card in the citations list */
+  .source-card {
+    display: block;
+    width: 100%;
+    text-align: left;
+    border-radius: 0.8rem;
+    border: 1px solid var(--color-line);
+    background: rgba(14, 14, 28, 0.5);
+    padding: 0.8rem 0.95rem;
+    transition: border-color 0.25s ease, background 0.25s ease, transform 0.25s ease;
+    cursor: pointer;
+  }
+  .source-card:hover {
+    border-color: var(--color-line-violet);
+    background: rgba(20, 20, 58, 0.6);
+    transform: translateY(-2px);
+  }
+
+  /* The "answered via cloud" badge — DSGVO visibility requirement */
+  .badge-cloud {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.22rem 0.6rem;
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: 0.64rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #ffd9a8;
+    background: rgba(255, 170, 60, 0.1);
+    border: 1px solid rgba(255, 170, 60, 0.4);
+  }
+  .badge-local {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.22rem 0.6rem;
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: 0.64rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--color-cyan-soft);
+    background: rgba(0, 242, 255, 0.07);
+    border: 1px solid var(--color-line-strong);
+  }
+
+  /* Ingest dropzone */
+  .dropzone {
+    border-radius: 1.1rem;
+    border: 1.5px dashed var(--color-line-violet);
+    background: rgba(139, 92, 246, 0.04);
+    padding: 2.5rem 1.5rem;
+    text-align: center;
+    transition: border-color 0.25s ease, background 0.25s ease;
+  }
+  .dropzone.is-dragging {
+    border-color: rgba(167, 139, 255, 0.7);
+    background: rgba(139, 92, 246, 0.1);
+  }
+
+  /* Text field (login token, ingest URL) */
+  .field {
+    width: 100%;
+    border-radius: 0.8rem;
+    border: 1px solid var(--color-line-violet);
+    background: rgba(9, 9, 19, 0.55);
+    padding: 0.75rem 0.95rem;
+    color: var(--color-ink);
+    font-family: var(--font-mono);
+    font-size: 0.9rem;
+    outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+  .field:focus {
+    border-color: rgba(167, 139, 255, 0.6);
+    box-shadow: 0 0 0 1px rgba(0, 242, 255, 0.18);
+  }
+
+  /* Job status chip */
+  .status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    border: 1px solid var(--color-line);
+    color: var(--color-ink-muted);
+  }
+  .status-chip[data-status='done'] {
+    color: #9ff5c0;
+    border-color: rgba(60, 220, 140, 0.4);
+    background: rgba(60, 220, 140, 0.08);
+  }
+  .status-chip[data-status='error'] {
+    color: #ff9aa8;
+    border-color: rgba(255, 90, 120, 0.4);
+    background: rgba(255, 90, 120, 0.08);
+  }
+  .status-chip[data-status='processing'],
+  .status-chip[data-status='queued'] {
+    color: var(--color-cyan-soft);
+    border-color: var(--color-line-strong);
+    background: rgba(0, 242, 255, 0.06);
+  }
+  .status-chip[data-status='skipped'] {
+    color: var(--color-ink-dim);
+  }
+}
+
+/* ============================================================
+   ATLAS SHELL POLISH — interaction classes referenced by the
+   ported console components (ChatThread/SourceCard/DocumentList/
+   SourcesPanel) that the standalone atlas-web never defined. Added
+   here so the desktop surfaces get the intended polish: a slim
+   scrollbar, the citation-click flash + active pin, the picker hover
+   lift, and the streaming caret. All reduced-motion safe.
+   ============================================================ */
+@layer components {
+  /* Slim, on-brand scrollbar for the three scrollable panes. */
+  .scroll-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(139, 92, 246, 0.45) transparent;
+  }
+  .scroll-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scroll-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scroll-thin::-webkit-scrollbar-thumb {
+    background: linear-gradient(rgba(0, 242, 255, 0.35), rgba(124, 58, 237, 0.45));
+    border-radius: 99px;
+  }
+  .scroll-thin::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(rgba(0, 242, 255, 0.55), rgba(124, 58, 237, 0.65));
+  }
+
+  /* A glass card that is clickable/selectable: pointer + a touch more lift. */
+  .glass-pick {
+    cursor: pointer;
+  }
+
+  /* The active/highlighted state of a card picked by a citation chip. */
+  .glass-active {
+    border-color: var(--color-line-strong) !important;
+    box-shadow:
+      0 1px 0 0 rgba(0, 242, 255, 0.2) inset,
+      0 0 0 1px rgba(0, 242, 255, 0.35),
+      0 28px 60px -30px rgba(0, 242, 255, 0.5) !important;
+  }
+
+  /* One-shot flash when a citation chip scrolls its source/doc card into view. */
+  .glass-flash {
+    animation: citeFlash 1.1s ease-out 1;
+  }
+
+  /* Blinking caret tail while the assistant answer is still streaming. */
+  .stream-caret::after {
+    content: '';
+    display: inline-block;
+    width: 0.5ch;
+    height: 1.05em;
+    margin-left: 0.12em;
+    vertical-align: -0.18em;
+    background: var(--color-cyan);
+    box-shadow: 0 0 8px rgba(0, 242, 255, 0.8);
+    border-radius: 1px;
+    animation: streamCaret 1.05s steps(1, end) infinite;
+  }
+}
+
+@keyframes citeFlash {
+  0% {
+    box-shadow:
+      0 0 0 1px rgba(0, 242, 255, 0.9),
+      0 0 28px 2px rgba(0, 242, 255, 0.55);
+  }
+  100% {
+    box-shadow:
+      0 0 0 1px rgba(0, 242, 255, 0),
+      0 0 28px 2px rgba(0, 242, 255, 0);
+  }
+}
+@keyframes streamCaret {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  50.01%,
+  100% {
+    opacity: 0;
+  }
+}

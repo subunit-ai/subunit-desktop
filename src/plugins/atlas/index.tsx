@@ -52,6 +52,16 @@ interface Source {
   score?: number;
 }
 
+/** One entry from GET /api/m/models (the answer-model picker feed). */
+interface ModelOption {
+  id: string;
+  label: string;
+  provider: string;
+  kind: "local" | "cloud";
+  available: boolean;
+  reason?: string;
+}
+
 // Best-effort extraction of prose tokens from a streamed SSE message.
 function extractToken(msg: SseMessage): string | null {
   const d = msg.data as Record<string, unknown> | string | undefined;
@@ -109,11 +119,47 @@ function AtlasView({ host }: { host: HostApi }) {
   const [asked, setAsked] = useState("");
   const answerRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef(false);
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const [model, setModel] = useState<string>("");
 
   useEffect(() => {
     const el = answerRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [answer]);
+
+  // Load the answer-model picker feed; restore the saved choice or fall back to
+  // the server default. Optional — if /models is unreachable, ask uses the default.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const saved = (await host.storage.get("atlas.model")) as string | undefined;
+        const res = await host.backend.fetch("atlas-api", "/api/m/models");
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as { models: ModelOption[]; default?: string };
+        setModels(data.models ?? []);
+        const avail = (data.models ?? []).filter((m) => m.available);
+        const pick =
+          saved && avail.some((m) => m.id === saved)
+            ? saved
+            : data.default ?? avail[0]?.id ?? "";
+        setModel(pick);
+      } catch {
+        /* models endpoint optional */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [host]);
+
+  const selectModel = useCallback(
+    (id: string) => {
+      setModel(id);
+      void host.storage.set("atlas.model", id);
+    },
+    [host]
+  );
 
   const ask = useCallback(
     async (q: string) => {
@@ -127,9 +173,9 @@ function AtlasView({ host }: { host: HostApi }) {
       setAsked(query);
       try {
         const stream = host.backend.sse("atlas-api", "/api/m/ask", {
-          question: query,
-          q: query,
-          stream: true,
+          query,
+          ...(model ? { model } : {}),
+          top_k: 8,
         });
         for await (const msg of stream) {
           if (cancelRef.current) break;
@@ -154,7 +200,7 @@ function AtlasView({ host }: { host: HostApi }) {
         setBusy(false);
       }
     },
-    [busy, host]
+    [busy, host, model]
   );
 
   const stop = useCallback(() => {
@@ -209,6 +255,24 @@ function AtlasView({ host }: { host: HostApi }) {
             </button>
           )}
         </div>
+
+        {models.length > 0 && (
+          <div className="atl-models">
+            <span className="atl-models-lbl">Modell</span>
+            {models.map((m) => (
+              <button
+                key={m.id}
+                className={`chip atl-model${m.id === model ? " on" : ""}${m.available ? "" : " off"}`}
+                disabled={!m.available}
+                title={m.available ? `${m.label} · ${m.provider}` : `${m.label} — ${m.reason ?? "nicht verfügbar"}`}
+                onClick={() => m.available && selectModel(m.id)}
+              >
+                {m.label}
+                {m.kind === "cloud" && <span className="atl-avv">AVV</span>}
+              </button>
+            ))}
+          </div>
+        )}
 
         {!asked && !busy && (
           <div className="atl-examples">
@@ -330,6 +394,12 @@ function AtlasStyle() {
 .atl-fld{margin-top:0;flex:1}
 .atl-go{width:auto;flex:none;display:inline-flex;align-items:center;gap:7px}
 .atl-go svg{width:17px;height:17px}
+.atl-models{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin-top:13px}
+.atl-models-lbl{font-size:11px;font-weight:650;letter-spacing:.05em;text-transform:uppercase;color:var(--ink3);margin-right:2px}
+.atl-model{font-weight:550;color:var(--ink2)}
+.atl-model.on{border-color:rgba(6,182,212,.4);color:var(--cyan-d);background:rgba(6,182,212,.08)}
+.atl-model.off{opacity:.5;cursor:not-allowed}
+.atl-avv{margin-left:6px;font-size:9px;font-weight:700;letter-spacing:.04em;padding:1px 5px;border-radius:6px;background:var(--amber-bg);color:var(--amber)}
 .atl-examples{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
 .atl-ex{font-weight:500;color:var(--ink2);max-width:100%}
 .atl-ex:hover{color:var(--ink);border-color:var(--line2)}

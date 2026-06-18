@@ -68,6 +68,18 @@ export const NOTION_COMMANDS = {
   update: "notion_update_task", // (id, patch) -> ()
 } as const;
 
+// PLACEHOLDER tasks until the Notion bridge is wired (TJ: "Notion später, erstmal
+// Platzhalter"). The row ACTIONS are fully functional — "Lokal ausführen" really
+// spawns a local pty, "Chat mit u1" really seeds the chat plugin; only the task
+// SOURCE is mock. To go live: restore invoke(NOTION_COMMANDS.list) in notion.listTasks.
+const PLACEHOLDER_TASKS = [
+  { id: "t1", title: "Atlas: lokale qwen2.5:7b-Antwortqualität gegen Golden-Fixtures messen", status: "In progress", assignee: "u1" },
+  { id: "t2", title: "Synapse: YouTube-Ingest gegen 3 echte Videos verifizieren", status: "Backlog", assignee: "u1" },
+  { id: "t3", title: "Dashboard: Terminals an echte Notion-Tasks koppeln", status: "Backlog", assignee: "TJ" },
+  { id: "t4", title: "memory-agent: WORKSPACE_GUARD_STRICT scharf schalten (Echo/Meet signieren)", status: "Blocked", assignee: "u1" },
+  { id: "t5", title: "atlas-api: Hetzner-Deploy vorbereiten (compose + Tunnel + SSO)", status: "Backlog", assignee: "TJ" },
+];
+
 /** Tauri commands for the external-plugin discovery path (loader.ts). */
 export const PLUGIN_COMMANDS = {
   /** () -> ExternalPluginDescriptor[] read from the <app_data>/plugins dir. */
@@ -347,14 +359,14 @@ export function makeHostApi(
     },
 
     notion: {
-      listTasks: (opts) => {
+      listTasks: async (_opts) => {
         gate("notion", "notion.listTasks");
-        if (!isTauri()) return Promise.resolve([]);
-        return invoke(NOTION_COMMANDS.list, { opts: opts ?? {} });
+        return PLACEHOLDER_TASKS.map((t) => ({ ...t })); // placeholder until Notion is wired
       },
-      updateTask: (tid, patch) => {
+      updateTask: async (tid, patch) => {
         gate("notion", "notion.updateTask");
-        return invoke(NOTION_COMMANDS.update, { id: tid, patch });
+        const t = PLACEHOLDER_TASKS.find((x) => x.id === tid);
+        if (t) Object.assign(t, patch); // placeholder mutate; real Notion sync later
       },
     },
 

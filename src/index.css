@@ -217,6 +217,16 @@ body {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+/* Synapse "Datenkrake" mark — a silhouette PNG recolored to the dock currentColor
+   (themes + goes cyan when active) via a CSS mask. */
+.syn-dockmark {
+  display: block;
+  width: 20px;
+  height: 20px;
+  background: currentColor;
+  -webkit-mask: url(/synapse-squid.png) center / contain no-repeat;
+  mask: url(/synapse-squid.png) center / contain no-repeat;
+}
 .dock-label {
   flex: 1;
   min-width: 0;

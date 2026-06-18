@@ -16,7 +16,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { HostApi, PluginModule } from "../../plugin/types";
 
-const ICON = `<svg viewBox="0 0 24 24"><path d="M12 2v6m0 8v6"/><circle cx="12" cy="12" r="3"/><path d="M5 7l3 2M19 7l-3 2M5 17l3-2M19 17l-3-2"/></svg>`;
+// Datenkrake — the Synapse mark (giant squid). A silhouette recolored to the dock's
+// currentColor via a CSS mask (.syn-dockmark in index.css), so it themes + goes cyan when active.
+const ICON = `<span class="syn-dockmark" aria-hidden="true"></span>`;
 
 const Svg = (props: { d: string }) => (
   <svg
@@ -214,11 +216,14 @@ function SynapseView({ host }: { host: HostApi }) {
       <SynapseStyle />
 
       <div className="syn-hero">
-        <h1>Synapse</h1>
-        <p>
-          Speise Wissen ein — Dokumente, Links, Videos. Jede Quelle wird indexiert
-          und sofort über Atlas abfragbar.
-        </p>
+        <span className="syn-mark" aria-hidden="true" />
+        <div className="syn-hero-tx">
+          <h1>Synapse</h1>
+          <p>
+            Die Datenkrake. Speise Wissen ein — Dokumente, Links, Videos. Jede Quelle
+            wird indexiert und sofort über Atlas abfragbar.
+          </p>
+        </div>
       </div>
 
       <div className="syn-grid">
@@ -350,7 +355,9 @@ function SynapseStyle() {
   return (
     <style>{`
 .syn{width:100%;max-width:1040px;margin:0 auto;padding:26px 28px 56px}
-.syn-hero{margin:6px 2px 20px}
+.syn-hero{display:flex;align-items:center;gap:18px;margin:6px 2px 22px}
+.syn-mark{flex:none;width:66px;height:66px;background:linear-gradient(155deg,var(--cyan),var(--cyan-ink));-webkit-mask:url(/synapse-squid.png) center/contain no-repeat;mask:url(/synapse-squid.png) center/contain no-repeat;filter:drop-shadow(0 7px 18px rgba(6,182,212,.38))}
+.syn-hero-tx{min-width:0}
 .syn-hero h1{font-size:30px;font-weight:600;letter-spacing:-.035em;line-height:1.05}
 .syn-hero p{font-size:14.5px;color:var(--ink2);line-height:1.5;margin-top:8px;max-width:52ch;letter-spacing:-.006em}
 

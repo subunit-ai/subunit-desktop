@@ -48,7 +48,7 @@
       "endpoints": [
         "https://github.com/subunit-ai/subunit-desktop/releases/latest/download/latest.json"
       ],
-      "pubkey": "ZFc1MGNuVnpkR1ZrSUdOdmJXMWxiblE2SUcxcGJtbHphV2R1SUhCMVlteHBZeUJyWlhrNklERkJOa0ZFTUVJMVJEUXlNamt4TlRRS1VsZFNWV3RUVEZWMFpFSnhSMjFwV1hSak5rTXpNbkpSUjFObVVVaGtObk5qUldodWNYaG5WR0kwZEhJeVpHcGlWRXRRYzNsU09VVUs=",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFBNkFEMEI1RDQyMjkxNTQKUldSVWtTTFV0ZEJxR21pWXRjNkMzMnJRR1NmUUhkNnNjRWhucXhnVGI0dHIyZGpiVEtQc3lSOUUK",
       "windows": {
         "installMode": "passive"
       }

@@ -33,7 +33,14 @@ import {
   getToken as authGetToken,
   onAccountChange,
 } from "../lib/auth";
-import { isTauri, openExternal } from "../lib/ipc";
+import {
+  appVersion,
+  checkForUpdates,
+  installUpdate,
+  isTauri,
+  onUpdateAvailable,
+  openExternal,
+} from "../lib/ipc";
 import { BACKENDS, BACKEND_BASE_URL } from "../lib/config";
 import type {
   Account,
@@ -418,6 +425,44 @@ export function makeHostApi(
         } catch {
           /* storage may be unavailable / quota */
         }
+      },
+    },
+
+    updater: {
+      version: () => {
+        gate("updater", "updater.version");
+        return isTauri() ? appVersion() : Promise.resolve("dev");
+      },
+      check: async () => {
+        gate("updater", "updater.check");
+        if (!isTauri()) return { current: "dev", available: null };
+        const [current, available] = await Promise.all([
+          appVersion(),
+          checkForUpdates(),
+        ]);
+        return { current, available: available || null };
+      },
+      install: () => {
+        gate("updater", "updater.install");
+        if (!isTauri())
+          return Promise.reject(
+            new Error("Updates sind nur in der Desktop-App verfügbar.")
+          );
+        return installUpdate();
+      },
+      onAvailable: (cb) => {
+        gate("updater", "updater.onAvailable");
+        if (!isTauri()) return () => {};
+        let un: (() => void) | null = null;
+        let cancelled = false;
+        void onUpdateAvailable(cb).then((u) => {
+          if (cancelled) u();
+          else un = u;
+        });
+        return () => {
+          cancelled = true;
+          un?.();
+        };
       },
     },
 

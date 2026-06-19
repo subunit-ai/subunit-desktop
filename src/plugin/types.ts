@@ -53,6 +53,7 @@ export type Permission =
   | "notion" // notion.listTasks / updateTask via the host
   | "notifications" // notifications.notify
   | "storage" // storage.get / set (per-plugin namespaced)
+  | "updater" // updater.version / check / install / onAvailable (app self-update)
   | (string & {}); // forward-compatible: unknown permissions are simply ungranted
 
 /**
@@ -228,6 +229,33 @@ export interface HostStorage {
   set(key: string, val: unknown): Promise<void>;
 }
 
+/** Software-update status reported by the host updater. */
+export interface UpdateState {
+  /** Currently installed app version (e.g. "0.2.4"). */
+  current: string;
+  /** Newer version available from the signed release endpoint, or null if up to date. */
+  available: string | null;
+}
+
+/**
+ * App self-update surface, backed by the Tauri minisign updater (the same
+ * `latest.json` pipeline the shell ships). Permission-gated by "updater".
+ */
+export interface HostUpdater {
+  /** The currently installed app version. */
+  version(): Promise<string>;
+  /** Query the release endpoint; resolves installed + available versions. */
+  check(): Promise<UpdateState>;
+  /**
+   * Download + install the pending update and relaunch the app. On success the
+   * process restarts so the returned promise never resolves; it REJECTS when no
+   * update is pending or the download / signature check fails.
+   */
+  install(): Promise<void>;
+  /** Subscribe to the shell's background "update available" signal; returns an unsubscribe fn. */
+  onAvailable(cb: (version: string) => void): () => void;
+}
+
 export interface HostUi {
   /** Current theme. */
   theme(): "light" | "dark";
@@ -271,5 +299,6 @@ export interface HostApi {
   events: HostEvents;
   notifications: HostNotifications;
   storage: HostStorage;
+  updater: HostUpdater;
   ui: HostUi;
 }

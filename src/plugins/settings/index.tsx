@@ -46,6 +46,7 @@ function SettingsView({ host }: { host: HostApi }) {
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [phase, setPhase] = useState<Phase>("checking");
+  const [progress, setProgress] = useState<number | null>(null);
   const [err, setErr] = useState("");
   const [checkedAt, setCheckedAt] = useState<string>("");
   const alive = useRef(true);
@@ -75,6 +76,7 @@ function SettingsView({ host }: { host: HostApi }) {
 
   const install = useCallback(async () => {
     setPhase("installing");
+    setProgress(null);
     setErr("");
     try {
       // On success the app downloads, installs and RESTARTS — this never resolves.
@@ -99,9 +101,13 @@ function SettingsView({ host }: { host: HostApi }) {
       // the correct state themselves (same release endpoint).
       setPhase((p) => (p === "installing" || p === "checking" ? p : "available"));
     });
+    const offProg = host.updater.onProgress((pct) => {
+      if (alive.current) setProgress(pct);
+    });
     return () => {
       alive.current = false;
       off();
+      offProg();
     };
   }, [host, runCheck]);
 
@@ -138,8 +144,17 @@ function SettingsView({ host }: { host: HostApi }) {
   } else if (phase === "installing") {
     tone = "new";
     icon = <span className="set-spin" role="status" aria-label="Wird geladen" />;
-    head = "Update wird installiert…";
+    head =
+      progress != null
+        ? `Update wird installiert… ${progress} %`
+        : "Update wird installiert…";
     sub = `v${next} wird heruntergeladen und installiert. Die App startet gleich automatisch neu — bitte nicht schließen.`;
+    action =
+      progress != null ? (
+        <div className="set-prog" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}>
+          <span className="set-prog-fill" style={{ width: `${progress}%` }} />
+        </div>
+      ) : null;
   } else if (phase === "error") {
     tone = "err";
     icon = <Svg d="M12 9v4|M12 17h.01|M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />;
@@ -218,6 +233,8 @@ function SettingsStyle() {
 .set-upd-act{flex:none}
 .set-upd-act .btn,.set-upd-act .btn-ghost{white-space:nowrap}
 .set-upd-act svg{width:15px;height:15px}
+.set-prog{width:120px;height:6px;border-radius:999px;overflow:hidden;background:var(--glass-2,rgba(120,120,128,.16));box-shadow:inset 0 1px 0 var(--rim)}
+.set-prog-fill{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#22d3ee,#06b6d4);transition:width .25s ease}
 .set-spin{width:20px;height:20px;border-radius:50%;border:2.2px solid var(--rim);border-top-color:var(--cyan);animation:set-rot .7s linear infinite}
 @keyframes set-rot{to{transform:rotate(360deg)}}
 .set-link{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;margin-top:16px;padding:11px;border:none;background:none;cursor:pointer;font:inherit;font-size:12.5px;font-weight:550;color:var(--ink3);transition:color .15s}

@@ -471,7 +471,11 @@ export function App() {
   if (!ready) {
     return (
       <div className="shell">
-        <div className="stage-loading" style={{ gridColumn: "1 / -1" }}>
+        <div
+          className="stage-loading"
+          style={{ gridColumn: "1 / -1", flexDirection: "column", gap: 18 }}
+        >
+          <SubunitMark size={56} style={{ color: "var(--cyan)" }} />
           <span className="spinner" />
           Loading Subunit…
         </div>

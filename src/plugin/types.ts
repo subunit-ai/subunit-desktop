@@ -254,6 +254,11 @@ export interface HostUpdater {
   install(): Promise<void>;
   /** Subscribe to the shell's background "update available" signal; returns an unsubscribe fn. */
   onAvailable(cb: (version: string) => void): () => void;
+  /**
+   * Subscribe to download progress during install(): `pct` is 0..100, or null
+   * when the total size is unknown. Returns an unsubscribe fn.
+   */
+  onProgress(cb: (pct: number | null) => void): () => void;
 }
 
 export interface HostUi {

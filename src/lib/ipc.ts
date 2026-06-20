@@ -55,6 +55,19 @@ export const onConfigChanged = (cb: () => void): Promise<UnlistenFn> =>
 export const onUpdateAvailable = (cb: (version: string) => void): Promise<UnlistenFn> =>
   listen<string>("subunit://update-available", (e) => cb(e.payload));
 
+/** Download progress emitted by Rust during `installUpdate`. */
+export interface UpdateProgress {
+  downloaded: number;
+  total: number | null;
+  pct: number | null;
+}
+
+/** Emitted repeatedly by Rust while an update downloads; payload is {downloaded,total,pct}. */
+export const onUpdateProgress = (
+  cb: (p: UpdateProgress) => void
+): Promise<UnlistenFn> =>
+  listen<UpdateProgress>("subunit://update-progress", (e) => cb(e.payload));
+
 /** True when running inside the Tauri shell (vs. a plain browser tab). */
 export const isTauri = (): boolean =>
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;

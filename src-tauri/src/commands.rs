@@ -136,9 +136,23 @@ pub async fn check_for_updates(app: AppHandle) -> Result<String, String> {
     }
 }
 
-/// Download + install the pending update, then relaunch.
+/// Download progress emitted to the frontend during `install_update`, so the
+/// Settings UI can show a real percentage instead of an indeterminate spinner.
+#[derive(Debug, Clone, Serialize)]
+pub struct UpdateProgress {
+    /// Bytes downloaded so far.
+    pub downloaded: u64,
+    /// Total bytes, when the server reported a content length.
+    pub total: Option<u64>,
+    /// 0..100 percentage, or null when the total size is unknown.
+    pub pct: Option<u32>,
+}
+
+/// Download + install the pending update, then relaunch. Emits
+/// `subunit://update-progress` chunks while downloading.
 #[tauri::command]
 pub async fn install_update(app: AppHandle) -> Result<(), String> {
+    use tauri::Emitter;
     use tauri_plugin_updater::UpdaterExt;
     let updater = app.updater().map_err(|e| e.to_string())?;
     let update = updater
@@ -146,8 +160,31 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "no update available".to_string())?;
+
+    let progress_app = app.clone();
+    let mut downloaded: u64 = 0;
     update
-        .download_and_install(|_chunk, _total| {}, || {})
+        .download_and_install(
+            move |chunk, total| {
+                downloaded += chunk as u64;
+                let pct = total.and_then(|t| {
+                    if t > 0 {
+                        Some(((downloaded as f64 / t as f64) * 100.0).min(100.0) as u32)
+                    } else {
+                        None
+                    }
+                });
+                let _ = progress_app.emit(
+                    "subunit://update-progress",
+                    UpdateProgress {
+                        downloaded,
+                        total,
+                        pct,
+                    },
+                );
+            },
+            || {},
+        )
         .await
         .map_err(|e| e.to_string())?;
     app.restart();

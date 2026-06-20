@@ -39,6 +39,7 @@ import {
   installUpdate,
   isTauri,
   onUpdateAvailable,
+  onUpdateProgress,
   openExternal,
 } from "../lib/ipc";
 import { BACKENDS, BACKEND_BASE_URL } from "../lib/config";
@@ -456,6 +457,20 @@ export function makeHostApi(
         let un: (() => void) | null = null;
         let cancelled = false;
         void onUpdateAvailable(cb).then((u) => {
+          if (cancelled) u();
+          else un = u;
+        });
+        return () => {
+          cancelled = true;
+          un?.();
+        };
+      },
+      onProgress: (cb) => {
+        gate("updater", "updater.onProgress");
+        if (!isTauri()) return () => {};
+        let un: (() => void) | null = null;
+        let cancelled = false;
+        void onUpdateProgress((p) => cb(p.pct)).then((u) => {
           if (cancelled) u();
           else un = u;
         });

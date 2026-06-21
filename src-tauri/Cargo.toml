@@ -1,6 +1,6 @@
 [package]
 name = "subunit-desktop"
-version = "0.2.9"
+version = "0.2.10"
 description = "Subunit — desktop shell hosting Atlas, Synapse, Chat, Call & Echo (Tauri 2)"
 authors = ["Subunit UG"]
 edition = "2021"

@@ -1,113 +1,93 @@
 /**
- * Marketplace — the Subunit hub, à la Adobe Creative Cloud.
+ * Marktplatz — the Subunit hub, à la Adobe Creative Cloud.
  *
- * Two kinds of "programs":
- *   · STANDALONE apps (Echo, Sonar) — their own native Mac apps. The card detects
- *     whether <App>.app is in /Applications (host.apps.status), fetches the newest
- *     GitHub release (host.apps.latest), and offers Installieren / Aktualisieren
- *     (one-click download+install into /Applications, with progress) and Öffnen
- *     (launch the real Mac app).
- *   · MODULES (Atlas, Synapse, Chat, Call) — surfaces that live inside Subunit.
- *     "Öffnen" just navigates the shell to that plugin.
+ * A real store with a top segmented bar switching between three shelves:
+ *   · PROGRAMME — standalone Mac apps (Echo, Sonar). Detect installed
+ *     (host.apps.status), fetch newest release (host.apps.latest), one-click
+ *     install/update into /Applications with progress, and launch the real app.
+ *     Cards show the REAL app icon extracted from the installed bundle.
+ *   · PLUGINS — the modules living inside Subunit (Cortex, Atlas, Synapse, Chat,
+ *     Call, Echo, Dashboard). "Öffnen" navigates the shell to that plugin.
+ *   · AGENTEN — the SNI agent-skill catalogue (Sentinel, Memory Agent, Architect,
+ *     Pulse, …): what a customer can add to their agent network. Status + price +
+ *     features; activation wires to the backend later.
  *
  * Permissions: apps (status/latest/open/install/onProgress), notifications. nav +
- * ui are ungated. Built entirely from Subunit Liquid Glass classes + tokens.
+ * ui ungated. Built entirely from Subunit Liquid Glass classes + tokens.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { HostApi, PluginModule } from "../../plugin/types";
 
-const ICON = `<svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/></svg>`;
+const ICON = `<svg viewBox="0 0 24 24"><path d="M3 9h18M9 9v12M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/></svg>`;
 
 const Svg = (props: { d: string }) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={1.7}
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
     {props.d.split("|").map((p, i) => (
       <path key={i} d={p} />
     ))}
   </svg>
 );
 
-// ── catalogue ────────────────────────────────────────────────────────────────
+// ── catalogues ───────────────────────────────────────────────────────────────
 
 interface StandaloneApp {
   id: string;
   name: string;
   tagline: string;
-  appName: string; // /Applications/<appName>.app
+  appName: string;
   bundleId: string;
-  repo: string; // owner/name (newest release lookup)
-  icon: string; // inline SVG path(s), "|"-separated
+  repo: string;
+  iconImg: string; // real bundle icon
 }
 
 interface ModuleApp {
   id: string;
   name: string;
   tagline: string;
-  pluginId: string; // nav target
+  pluginId: string;
   icon: string;
+  accent: string;
+}
+
+interface AgentSkill {
+  code: string;
+  name: string;
+  emoji: string;
+  tier: "surface" | "core" | "deep";
+  desc: string;
+  features: string[];
+  price: string;
+  status: "ready" | "available" | "development" | "planned";
 }
 
 const STANDALONE: StandaloneApp[] = [
-  {
-    id: "echo",
-    name: "Echo",
-    tagline: "Diktat & Meeting-Transkription",
-    appName: "Echo",
-    bundleId: "ai.subunit.echo",
-    repo: "subunit-ai/echo-tauri",
-    icon: "M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z|M5 11a7 7 0 0 0 14 0|M12 18v3",
-  },
-  {
-    id: "sonar",
-    name: "Sonar",
-    tagline: "Eigenständige Subunit-App",
-    appName: "Sonar",
-    bundleId: "ai.subunit.sonar",
-    repo: "subunit-ai/sonar-tauri",
-    icon: "M12 12h.01|M8.5 8.5a5 5 0 0 1 7 0|M5.5 5.5a9 9 0 0 1 13 0|M8.5 15.5a5 5 0 0 0 7 0",
-  },
+  { id: "echo", name: "Echo", tagline: "Diktat & Meeting-Transkription", appName: "Echo", bundleId: "ai.subunit.echo", repo: "subunit-ai/echo-tauri", iconImg: "/app-echo.png" },
+  { id: "sonar", name: "Sonar", tagline: "Eigenständige Subunit-App", appName: "Sonar", bundleId: "ai.subunit.sonar", repo: "subunit-ai/sonar-tauri", iconImg: "/app-sonar.png" },
 ];
 
 const MODULES: ModuleApp[] = [
-  {
-    id: "atlas",
-    name: "Atlas",
-    tagline: "Wissens-Recherche mit Quellen",
-    pluginId: "atlas",
-    icon: "M4 19.5A2.5 2.5 0 0 1 6.5 17H20|M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z",
-  },
-  {
-    id: "synapse",
-    name: "Synapse",
-    tagline: "Wissens-Ingest — die Datenkrake",
-    pluginId: "synapse",
-    icon: "M12 5a3 3 0 1 0 0-.01|M5 12a3 3 0 1 0 0-.01|M19 12a3 3 0 1 0 0-.01|M12 8v3|M9.6 13.4 7 11.6|M14.4 13.4 17 11.6",
-  },
-  {
-    id: "chat",
-    name: "Chat",
-    tagline: "u1 im Gespräch",
-    pluginId: "chat",
-    icon: "M21 11.5a8.4 8.4 0 0 1-12 7.6L3 21l1.9-5.8A8.4 8.4 0 1 1 21 11.5Z",
-  },
-  {
-    id: "call",
-    name: "Call",
-    tagline: "Voice-Anrufe, live transkribiert",
-    pluginId: "call",
-    icon: "M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.4-1.2a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2Z",
-  },
+  { id: "cortex", name: "Cortex", tagline: "Agenten-Nervensystem — Axone & Reflexe", pluginId: "cortex", accent: "#06b6d4", icon: "M12 5a3 3 0 1 0-2.6-4.5|M12 9.6v2.4|M10 11 6.9 8.6|M14 11l3.1-2.4" },
+  { id: "atlas", name: "Atlas", tagline: "Wissens-Recherche mit Quellen", pluginId: "atlas", accent: "#fbbf24", icon: "M4 19.5A2.5 2.5 0 0 1 6.5 17H20|M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z" },
+  { id: "synapse", name: "Synapse", tagline: "Wissens-Ingest — die Datenkrake", pluginId: "synapse", accent: "#06b6d4", icon: "M12 5a3 3 0 1 0 0-.01|M5 12a3 3 0 1 0 0-.01|M19 12a3 3 0 1 0 0-.01|M12 8v3|M9.6 13.4 7 11.6|M14.4 13.4 17 11.6" },
+  { id: "dashboard", name: "Dashboard", tagline: "Ops-Board — Aufgaben & Terminals", pluginId: "dashboard", accent: "#36d399", icon: "M3 3h7v9H3z|M14 3h7v5h-7z|M14 12h7v9h-7z|M3 16h7v5H3z" },
+  { id: "chat", name: "Chat", tagline: "u1 im Gespräch", pluginId: "chat", accent: "#a78bfa", icon: "M21 11.5a8.4 8.4 0 0 1-12 7.6L3 21l1.9-5.8A8.4 8.4 0 1 1 21 11.5Z" },
+  { id: "call", name: "Call", tagline: "Voice-Anrufe, live transkribiert", pluginId: "call", accent: "#38bdf8", icon: "M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.4-1.2a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2Z" },
+  { id: "echo", name: "Echo", tagline: "Diktat in Subunit", pluginId: "echo", accent: "#22d3ee", icon: "M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z|M5 11a7 7 0 0 0 14 0|M12 18v3" },
 ];
 
-/** Compare dotted numeric versions. >0 if a newer than b. */
+// SNI agent-skill catalogue (ported from subunit-ai/sni MARKETPLACE_ITEMS).
+const SKILLS: AgentSkill[] = [
+  { code: "S-13", name: "Architect", emoji: "🏗️", tier: "core", status: "ready", price: "349€/mo", desc: "Automatisches n8n Workflow-Deployment, Axon-Builder, Infrastructure-as-Code für Agent-Stacks.", features: ["n8n Auto-Deploy", "Axon-Builder", "Infrastructure-as-Code"] },
+  { code: "S-12", name: "Memory Agent", emoji: "🧠", tier: "deep", status: "development", price: "249€/mo", desc: "Langzeit-Gedächtnis mit Embeddings, semantische Suche, ChromaDB-Backend — lernt aus jeder Interaktion.", features: ["Embedding-Speicher", "Semantische Suche", "Kontext-Recall"] },
+  { code: "S-00", name: "Sentinel", emoji: "🛡️", tier: "deep", status: "development", price: "199€/mo", desc: "Security-Überwachung, Kosten-Tracking, API-Nutzungsanalyse und Anomalie-Erkennung.", features: ["Threat-Detection", "API-Usage-Monitoring", "Kosten-Alerts"] },
+  { code: "S-14", name: "Pulse", emoji: "⚡", tier: "core", status: "planned", price: "199€/mo", desc: "LLM-Routing & Kosten-Optimierung — wählt automatisch das beste Modell je nach Task und Budget.", features: ["Multi-LLM-Router", "Auto-Modellwahl", "Budget-Limits"] },
+  { code: "S-15", name: "Librarian", emoji: "📚", tier: "surface", status: "planned", price: "149€/mo", desc: "Workspace-Organisation, automatische Archivierung, Dokumenten-Lifecycle-Management.", features: ["Auto-Archivierung", "Tag-System", "Retention-Policies"] },
+  { code: "S-16", name: "Sync Agent", emoji: "🔄", tier: "surface", status: "planned", price: "149€/mo", desc: "Automatische Datensynchronisation zwischen allen Axonen — CRM, Mail, Kalender, Knowledge Base.", features: ["Bi-direktionaler Sync", "Conflict Resolution", "Delta-Updates"] },
+  { code: "S-XX", name: "Custom Agent", emoji: "⚙️", tier: "deep", status: "available", price: "Auf Anfrage", desc: "Maßgeschneiderter KI-Agent nach Ihren Anforderungen — wir bauen, was Ihr Business braucht.", features: ["Individuelles Design", "Custom API-Anbindungen", "SLA-Garantie"] },
+];
+
 function cmpVersion(a: string, b: string): number {
   const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
   const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
@@ -118,15 +98,8 @@ function cmpVersion(a: string, b: string): number {
   return 0;
 }
 
-// ── standalone app card ──────────────────────────────────────────────────────
-
-type AppState =
-  | "checking"
-  | "available" // not installed, installable
-  | "installed" // installed, up to date
-  | "update" // installed, newer available
-  | "installing"
-  | "error"; // not installed + couldn't resolve a release
+// ── PROGRAMME: standalone app card ───────────────────────────────────────────
+type AppState = "checking" | "available" | "installed" | "update" | "installing" | "error";
 
 function AppCard({ host, app }: { host: HostApi; app: StandaloneApp }) {
   const [state, setState] = useState<AppState>("checking");
@@ -140,10 +113,7 @@ function AppCard({ host, app }: { host: HostApi; app: StandaloneApp }) {
 
   const refresh = useCallback(async () => {
     setErr("");
-    const [s, rel] = await Promise.allSettled([
-      host.apps.status(app.appName),
-      host.apps.latest(app.repo),
-    ]);
+    const [s, rel] = await Promise.allSettled([host.apps.status(app.appName), host.apps.latest(app.repo)]);
     if (!alive.current) return;
     const inst = s.status === "fulfilled" && s.value.installed;
     const instVer = s.status === "fulfilled" ? s.value.version : null;
@@ -153,12 +123,10 @@ function AppCard({ host, app }: { host: HostApi; app: StandaloneApp }) {
       dmgRef.current = rel.value.dmgUrl;
     }
     if (inst) {
-      if (rel.status === "fulfilled" && instVer && cmpVersion(rel.value.version, instVer) > 0)
-        setState("update");
+      if (rel.status === "fulfilled" && instVer && cmpVersion(rel.value.version, instVer) > 0) setState("update");
       else setState("installed");
-    } else if (rel.status === "fulfilled") {
-      setState("available");
-    } else {
+    } else if (rel.status === "fulfilled") setState("available");
+    else {
       setErr("Release nicht erreichbar");
       setState("error");
     }
@@ -194,36 +162,22 @@ function AppCard({ host, app }: { host: HostApi; app: StandaloneApp }) {
       setErr(e instanceof Error ? e.message : String(e));
       setState("error");
     }
-  }, [host, app.appName, app.name, refresh]);
+  }, [host, app.appName, app.bundleId, app.name, refresh]);
 
   const open = useCallback(() => {
-    void host.apps.open(app.bundleId, app.appName).catch((e) => {
-      setErr(e instanceof Error ? e.message : String(e));
-    });
+    void host.apps.open(app.bundleId, app.appName).catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   }, [host, app.bundleId, app.appName]);
 
-  const phaseLabel =
-    phase === "mount"
-      ? "Entpacke…"
-      : phase === "install"
-        ? "Installiere…"
-        : phase === "done"
-          ? "Fertig"
-          : "Lade…";
+  const phaseLabel = phase === "mount" ? "Entpacke…" : phase === "install" ? "Installiere…" : phase === "done" ? "Fertig" : "Lade…";
 
   return (
     <div className="mk-card">
-      <span className="mk-ic mk-ic-app">
-        <Svg d={app.icon} />
-      </span>
+      <span className="mk-ic mk-ic-img"><img src={app.iconImg} alt="" /></span>
       <div className="mk-tx">
-        <div className="mk-name">
-          {app.name}
-          <span className="mk-badge">App</span>
-        </div>
+        <div className="mk-name">{app.name}<span className="mk-badge">App</span></div>
         <div className="mk-tag">{app.tagline}</div>
         <div className="mk-meta">
-          {state === "checking" && "…"}
+          {state === "checking" && "Prüfe…"}
           {state === "available" && `Version ${latest} · nicht installiert`}
           {state === "installed" && `Version ${installed} · aktuell`}
           {state === "update" && `${installed} → ${latest} verfügbar`}
@@ -231,101 +185,122 @@ function AppCard({ host, app }: { host: HostApi; app: StandaloneApp }) {
           {state === "error" && (err || "Fehler")}
         </div>
         {state === "installing" && (
-          <div
-            className="mk-prog"
-            role="progressbar"
-            aria-valuenow={pct ?? 0}
-            aria-valuemin={0}
-            aria-valuemax={100}
-          >
+          <div className="mk-prog" role="progressbar" aria-valuenow={pct ?? 0} aria-valuemin={0} aria-valuemax={100}>
             <span className="mk-prog-fill" style={{ width: `${pct ?? 5}%` }} />
           </div>
         )}
       </div>
       <div className="mk-act">
         {state === "checking" && <span className="mk-spin" role="status" aria-label="Prüfe" />}
-        {state === "available" && (
-          <button className="btn btn-primary minibtn" onClick={() => void install()}>
-            Installieren
-          </button>
-        )}
+        {state === "available" && <button className="btn btn-primary minibtn" onClick={() => void install()}>Installieren</button>}
         {state === "update" && (
           <>
-            <button className="btn btn-primary minibtn" onClick={() => void install()}>
-              Aktualisieren
-            </button>
-            <button className="btn-ghost minibtn" onClick={open}>
-              Öffnen
-            </button>
+            <button className="btn btn-primary minibtn" onClick={() => void install()}>Aktualisieren</button>
+            <button className="btn-ghost minibtn" onClick={open}>Öffnen</button>
           </>
         )}
-        {state === "installed" && (
-          <button className="btn btn-primary minibtn" onClick={open}>
-            Öffnen
-          </button>
-        )}
+        {state === "installed" && <button className="btn btn-primary minibtn" onClick={open}>Öffnen</button>}
         {state === "installing" && <span className="mk-spin" role="status" aria-label="Installiert" />}
-        {state === "error" && (
-          <button className="btn-ghost minibtn" onClick={() => void refresh()}>
-            Erneut
-          </button>
-        )}
+        {state === "error" && <button className="btn-ghost minibtn" onClick={() => void refresh()}>Erneut</button>}
       </div>
     </div>
   );
 }
 
-// ── module card ──────────────────────────────────────────────────────────────
-
+// ── PLUGINS: module card ─────────────────────────────────────────────────────
 function ModuleCard({ host, mod }: { host: HostApi; mod: ModuleApp }) {
   return (
     <div className="mk-card">
-      <span className="mk-ic mk-ic-mod">
-        <Svg d={mod.icon} />
-      </span>
+      <span className="mk-ic mk-ic-mod" style={{ "--a": mod.accent } as React.CSSProperties}><Svg d={mod.icon} /></span>
       <div className="mk-tx">
-        <div className="mk-name">
-          {mod.name}
-          <span className="mk-badge mk-badge-mod">Modul</span>
-        </div>
+        <div className="mk-name">{mod.name}<span className="mk-badge mk-badge-mod">Plugin</span></div>
         <div className="mk-tag">{mod.tagline}</div>
         <div className="mk-meta">In Subunit · sofort verfügbar</div>
       </div>
       <div className="mk-act">
-        <button className="btn btn-primary minibtn" onClick={() => host.nav.navigate(mod.pluginId)}>
-          Öffnen
-        </button>
+        <button className="btn btn-primary minibtn" onClick={() => host.nav.navigate(mod.pluginId)}>Öffnen</button>
+      </div>
+    </div>
+  );
+}
+
+// ── AGENTEN: agent-skill card ────────────────────────────────────────────────
+const SKILL_STATUS: Record<AgentSkill["status"], { label: string; cls: string; cta: string | null }> = {
+  ready: { label: "Verfügbar", cls: "ok", cta: "Aktivieren" },
+  available: { label: "Auf Anfrage", cls: "ok", cta: "Anfragen" },
+  development: { label: "In Entwicklung", cls: "dev", cta: null },
+  planned: { label: "Geplant", cls: "plan", cta: null },
+};
+
+function SkillCard({ host, skill }: { host: HostApi; skill: AgentSkill }) {
+  const s = SKILL_STATUS[skill.status];
+  return (
+    <div className="mk-card mk-skill">
+      <span className="mk-ic mk-ic-skill">{skill.emoji}</span>
+      <div className="mk-tx">
+        <div className="mk-name">
+          {skill.name}
+          <span className="mk-code">{skill.code}</span>
+          <span className={`mk-badge mk-st-${s.cls}`}>{s.label}</span>
+        </div>
+        <div className="mk-tag">{skill.desc}</div>
+        <div className="mk-feats">
+          {skill.features.map((f) => (
+            <span key={f} className="mk-feat">{f}</span>
+          ))}
+        </div>
+      </div>
+      <div className="mk-act mk-act-col">
+        <span className="mk-price">{skill.price}</span>
+        {s.cta ? (
+          <button
+            className="btn btn-primary minibtn"
+            onClick={() => host.notifications.notify(`${skill.name}`, "Aktivierung wird mit dem Agentur-Backend verbunden — kommt bald.")}
+          >
+            {s.cta}
+          </button>
+        ) : (
+          <span className="mk-soon">bald</span>
+        )}
       </div>
     </div>
   );
 }
 
 // ── view ─────────────────────────────────────────────────────────────────────
+type Tab = "programme" | "plugins" | "agenten";
 
-function MarketplaceView({ host }: { host: HostApi }) {
+const TABS: { id: Tab; label: string; hint: string }[] = [
+  { id: "programme", label: "Programme", hint: "Standalone-Apps für deinen Mac" },
+  { id: "plugins", label: "Plugins", hint: "Module direkt in Subunit" },
+  { id: "agenten", label: "Agenten", hint: "Agent-Skills fürs Netzwerk" },
+];
+
+function MarketView({ host }: { host: HostApi }) {
+  const [tab, setTab] = useState<Tab>("programme");
+  const active = TABS.find((t) => t.id === tab)!;
+
   return (
     <div className="mk">
       <MarketStyle />
       <div className="mk-hero">
-        <h1>Programme</h1>
-        <p>
-          Dein Subunit-Hub — Standalone-Apps installieren &amp; öffnen, interne
-          Module direkt starten.
-        </p>
+        <h1>Marktplatz</h1>
+        <p>Standalone-Apps installieren, Subunit-Module öffnen und Agent-Skills entdecken.</p>
       </div>
 
-      <div className="sect">Standalone-Apps</div>
-      <div className="mk-grid">
-        {STANDALONE.map((a) => (
-          <AppCard key={a.id} host={host} app={a} />
+      <div className="mk-tabs" role="tablist">
+        {TABS.map((t) => (
+          <button key={t.id} role="tab" aria-selected={tab === t.id} className={`mk-tab${tab === t.id ? " on" : ""}`} onClick={() => setTab(t.id)}>
+            {t.label}
+          </button>
         ))}
       </div>
+      <div className="mk-tabhint">{active.hint}</div>
 
-      <div className="sect">In Subunit</div>
       <div className="mk-grid">
-        {MODULES.map((m) => (
-          <ModuleCard key={m.id} host={host} mod={m} />
-        ))}
+        {tab === "programme" && STANDALONE.map((a) => <AppCard key={a.id} host={host} app={a} />)}
+        {tab === "plugins" && MODULES.map((m) => <ModuleCard key={m.id} host={host} mod={m} />)}
+        {tab === "agenten" && SKILLS.map((s) => <SkillCard key={s.code} host={host} skill={s} />)}
       </div>
     </div>
   );
@@ -334,29 +309,53 @@ function MarketplaceView({ host }: { host: HostApi }) {
 function MarketStyle() {
   return (
     <style>{`
-.mk{width:100%;max-width:920px;margin:0 auto;padding:30px 24px 56px}
-.mk-hero{padding:4px 2px 18px}
+.mk{width:100%;max-width:940px;margin:0 auto;padding:30px 24px 56px}
+.mk-hero{padding:4px 2px 16px}
 .mk-hero h1{font-size:27px;font-weight:600;letter-spacing:-.035em}
-.mk-hero p{font-size:14px;color:var(--ink2);margin-top:7px;max-width:54ch;line-height:1.5}
-.mk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));gap:14px;margin-top:12px}
-.mk-card{display:flex;align-items:center;gap:15px;padding:16px 17px;border-radius:var(--r-sm);background:var(--glass);border:1px solid var(--rim);box-shadow:var(--shadow),inset 0 1px 0 var(--rim);min-height:78px}
-.mk-ic{flex:none;width:48px;height:48px;border-radius:14px;display:grid;place-items:center;box-shadow:inset 0 1px 0 var(--rim)}
-.mk-ic svg{width:25px;height:25px}
-.mk-ic-app{color:#fff;background:linear-gradient(155deg,#22d3ee,#06b6d4);box-shadow:0 10px 24px -12px rgba(6,182,212,.6),inset 0 1px 0 var(--rim-cta)}
-.mk-ic-mod{color:var(--cyan-d,#0891b2);background:rgba(6,182,212,.1)}
+.mk-hero p{font-size:14px;color:var(--ink2);margin-top:7px;max-width:56ch;line-height:1.5}
+
+.mk-tabs{display:inline-flex;padding:4px;border-radius:13px;background:var(--glass2);border:1px solid var(--line);box-shadow:inset 0 1px 0 var(--rim)}
+.mk-tab{border:none;background:none;padding:8px 20px;border-radius:9px;font:inherit;font-size:13.5px;font-weight:600;color:var(--ink2);cursor:pointer;transition:.16s}
+.mk-tab:hover{color:var(--ink)}
+.mk-tab.on{background:var(--glass);color:var(--ink);box-shadow:var(--shadow-sm),inset 0 1px 0 var(--rim)}
+.mk-tabhint{font-size:12px;color:var(--ink3);margin:10px 2px 4px;letter-spacing:.01em}
+
+.mk-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(390px,1fr));gap:14px;margin-top:10px}
+.mk-card{display:flex;align-items:center;gap:15px;padding:16px 17px;border-radius:var(--r-sm);background:var(--glass);backdrop-filter:blur(28px) saturate(1.7);-webkit-backdrop-filter:blur(28px) saturate(1.7);border:1px solid var(--glass-edge);box-shadow:var(--shadow),inset 0 1px 0 var(--rim);min-height:80px}
+.mk-skill{align-items:flex-start}
+
+.mk-ic{flex:none;width:52px;height:52px;border-radius:14px;display:grid;place-items:center;box-shadow:inset 0 1px 0 var(--rim)}
+.mk-ic-img{padding:0;overflow:hidden;box-shadow:0 8px 20px -10px rgba(0,0,0,.5)}
+.mk-ic-img img{width:52px;height:52px;object-fit:cover;border-radius:14px;display:block}
+.mk-ic-mod{color:var(--a,var(--cyan));background:var(--glass2);border:1px solid var(--line)}
+.mk-ic-mod svg{width:25px;height:25px;filter:drop-shadow(0 2px 6px var(--a))}
+.mk-ic-skill{font-size:26px;background:var(--glass2);border:1px solid var(--line)}
+
 .mk-tx{flex:1;min-width:0}
-.mk-name{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:650;letter-spacing:-.01em}
+.mk-name{display:flex;align-items:center;gap:8px;font-size:15.5px;font-weight:650;letter-spacing:-.01em}
+.mk-code{font-size:10.5px;font-weight:700;font-family:var(--mono,ui-monospace,monospace);color:var(--ink3)}
 .mk-badge{font-size:9.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border-radius:6px;color:var(--cyan-d,#0891b2);background:rgba(6,182,212,.12);border:1px solid rgba(6,182,212,.22)}
-.mk-badge-mod{color:var(--ink3);background:var(--glass-2,rgba(120,120,128,.1));border-color:var(--rim)}
-.mk-tag{font-size:12.5px;color:var(--ink2);margin-top:2px;line-height:1.4}
+.mk-badge-mod{color:var(--ink3);background:var(--glass2);border-color:var(--rim)}
+.mk-st-ok{color:#0a9d63;background:rgba(16,185,129,.12);border-color:rgba(16,185,129,.25)}
+.mk-st-dev{color:#b7791f;background:rgba(251,191,36,.12);border-color:rgba(251,191,36,.25)}
+.mk-st-plan{color:var(--ink3);background:var(--glass2);border-color:var(--rim)}
+.mk-tag{font-size:12.5px;color:var(--ink2);margin-top:3px;line-height:1.45}
 .mk-meta{font-size:11.5px;color:var(--ink3);margin-top:5px}
-.mk-prog{margin-top:8px;width:100%;max-width:240px;height:6px;border-radius:999px;overflow:hidden;background:var(--glass-2,rgba(120,120,128,.16));box-shadow:inset 0 1px 0 var(--rim)}
+.mk-feats{display:flex;flex-wrap:wrap;gap:5px;margin-top:9px}
+.mk-feat{font-size:10.5px;font-weight:550;padding:3px 8px;border-radius:999px;background:var(--glass2);border:1px solid var(--line);color:var(--ink2)}
+
+.mk-prog{margin-top:8px;width:100%;max-width:240px;height:6px;border-radius:999px;overflow:hidden;background:var(--glass2);box-shadow:inset 0 1px 0 var(--rim)}
 .mk-prog-fill{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#22d3ee,#06b6d4);transition:width .25s ease}
+
 .mk-act{flex:none;display:flex;align-items:center;gap:7px}
+.mk-act-col{flex-direction:column;align-items:flex-end;gap:8px}
 .mk-act .btn,.mk-act .btn-ghost{white-space:nowrap}
-.mk-spin{width:20px;height:20px;border-radius:50%;border:2.2px solid var(--rim);border-top-color:var(--cyan);animation:mk-rot .7s linear infinite}
+.mk-price{font-size:13px;font-weight:680;color:var(--ink);letter-spacing:-.01em}
+.mk-soon{font-size:11px;font-weight:650;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);padding:4px 10px;border-radius:999px;background:var(--glass2);border:1px solid var(--line)}
+.mk-spin{width:20px;height:20px;border-radius:50%;border:2.2px solid var(--line);border-top-color:var(--cyan);animation:mk-rot .7s linear infinite}
 @keyframes mk-rot{to{transform:rotate(360deg)}}
-@media (prefers-reduced-motion:reduce){.mk-spin{animation-duration:1.6s}}
+@media (prefers-reduced-motion:reduce){.mk-spin{animation-duration:1.6s}.mk-tab,.mk-prog-fill{transition:none}}
+@media (max-width:860px){.mk-grid{grid-template-columns:1fr}}
 `}</style>
   );
 }
@@ -367,20 +366,18 @@ let offCmd: (() => void) | null = null;
 const plugin: PluginModule = {
   manifest: {
     id: "marketplace",
-    name: "Programme",
-    version: "1.0.0",
-    description: "Hub — Apps installieren & Module öffnen.",
+    name: "Marktplatz",
+    version: "1.1.0",
+    description: "Programme, Plugins & Agent-Skills.",
     icon: ICON,
     permissions: ["apps", "notifications"],
     nav: { section: "core", order: 0 },
-    commands: [{ id: "open", title: "Open Marketplace" }],
+    commands: [{ id: "open", title: "Open Marktplatz" }],
   },
   mount(container, host) {
     root = createRoot(container);
-    root.render(<MarketplaceView host={host} />);
-    offCmd = host.events.on("command:marketplace:open", () =>
-      host.nav.navigate("marketplace")
-    );
+    root.render(<MarketView host={host} />);
+    offCmd = host.events.on("command:marketplace:open", () => host.nav.navigate("marketplace"));
   },
   unmount() {
     offCmd?.();

@@ -68,7 +68,7 @@ const STANDALONE: StandaloneApp[] = [
 ];
 
 const MODULES: ModuleApp[] = [
-  { id: "cortex", name: "Cortex", tagline: "Agenten-Nervensystem — Axone & Reflexe", pluginId: "cortex", accent: "#06b6d4", icon: "M12 5a3 3 0 1 0-2.6-4.5|M12 9.6v2.4|M10 11 6.9 8.6|M14 11l3.1-2.4" },
+  { id: "sni", name: "SNI", tagline: "Neural Interface — das Agenten-Kontrollzentrum", pluginId: "sni", accent: "#06b6d4", icon: "M12 5a3 3 0 1 0-2.6-4.5|M12 9.6v2.4|M10 11 6.9 8.6|M14 11l3.1-2.4" },
   { id: "atlas", name: "Atlas", tagline: "Wissens-Recherche mit Quellen", pluginId: "atlas", accent: "#fbbf24", icon: "M4 19.5A2.5 2.5 0 0 1 6.5 17H20|M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z" },
   { id: "synapse", name: "Synapse", tagline: "Wissens-Ingest — die Datenkrake", pluginId: "synapse", accent: "#06b6d4", icon: "M12 5a3 3 0 1 0 0-.01|M5 12a3 3 0 1 0 0-.01|M19 12a3 3 0 1 0 0-.01|M12 8v3|M9.6 13.4 7 11.6|M14.4 13.4 17 11.6" },
   { id: "dashboard", name: "Dashboard", tagline: "Ops-Board — Aufgaben & Terminals", pluginId: "dashboard", accent: "#36d399", icon: "M3 3h7v9H3z|M14 3h7v5h-7z|M14 12h7v9h-7z|M3 16h7v5H3z" },

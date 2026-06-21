@@ -24,12 +24,29 @@ export interface Agent {
   desc: string;
   axone: string[]; // codes of connected agents
   reflexe: string[]; // trigger names
+  /** The single orchestrator (the brain). Views pick it by THIS flag, never by a
+   *  hardcoded "U1" — the S-01..S-12 roster is a seed and will be redefined. */
+  orchestrator?: boolean;
 }
+
+/** The one orchestrator agent (by flag, with a code fallback). */
+export const orchestratorOf = (agents: Agent[]): Agent | undefined =>
+  agents.find((a) => a.orchestrator) ?? agents.find((a) => a.code === "U1");
+
+/**
+ * Tier presentation config — label + accent + ring radius. Data-driven so a 4th
+ * tier or a rename is a one-line change, not a code edit (SNI-PLAN §5.3).
+ */
+export const TIER_CONFIG: Record<Tier, { label: string; color: string; ring: number }> = {
+  core: { label: "Core", color: "#06b6d4", ring: 150 },
+  surface: { label: "Surface", color: "#ff8a5b", ring: 238 },
+  deep: { label: "Deep", color: "#2dd4bf", ring: 318 },
+};
 
 export const AGENTS: Agent[] = [
   {
     id: "u1", name: "Unit One", code: "U1", role: "Orchestrator", tier: "core",
-    color: "#00f0ff", status: "running", cpu: 12, mem: 340,
+    color: "#00f0ff", status: "running", cpu: 12, mem: 340, orchestrator: true,
     desc: "Zentraler Orchestrator — koordiniert alle Agenten, routet Aufgaben, überwacht Systemzustand.",
     axone: ["S-01", "S-02", "S-03", "S-04", "S-05", "S-06", "S-07", "S-08", "S-09", "S-10", "S-11"],
     reflexe: ["Workflow-Routing", "Fehler-Eskalation", "Last-Balancing", "Health-Check", "Auto-Recovery"],

@@ -25,6 +25,7 @@ import {
   type Agent,
   type Tier,
 } from "./agents";
+import HomeTab from "./tabs/Home";
 
 const ICON = `<svg viewBox="0 0 24 24"><path d="M12 5a3 3 0 1 0-2.6-4.5"/><circle cx="12" cy="12" r="2.4"/><circle cx="5.5" cy="7.5" r="1.8"/><circle cx="18.5" cy="7.5" r="1.8"/><circle cx="6" cy="17" r="1.8"/><circle cx="18" cy="17" r="1.8"/><path d="M10 11 6.9 8.6M14 11l3.1-2.4M10.7 13.4 7.3 15.8M13.3 13.4l3.4 2.4M12 9.6V6"/></svg>`;
 
@@ -248,8 +249,7 @@ function CortexView({ host: _host }: { host: HostApi }) {
 
       <div className="cx-head">
         <div className="cx-head-tx">
-          <h1>Cortex</h1>
-          <p>Das Nervensystem — U1 orchestriert {AGENTS.length - 1} Spezial-Agenten über Axone &amp; Reflexe.</p>
+          <p>Das Nervensystem — der Orchestrator koordiniert {AGENTS.length - 1} Spezial-Agenten über Axone &amp; Reflexe.</p>
         </div>
         <div className="cx-seg" role="tablist">
           <button className={mode === "axone" ? "on" : ""} onClick={() => setMode("axone")}>Axone</button>
@@ -390,7 +390,7 @@ function CortexView({ host: _host }: { host: HostApi }) {
 function CortexStyle() {
   return (
     <style>{`
-.cx{width:100%;max-width:1240px;margin:0 auto;padding:26px 22px 44px}
+.cx{width:100%}
 .cx-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:16px}
 .cx-head h1{font-size:27px;font-weight:600;letter-spacing:-.035em}
 .cx-head p{font-size:13.5px;color:var(--ink2);margin-top:5px;max-width:60ch}
@@ -502,24 +502,154 @@ function CortexStyle() {
   );
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// SNI shell — the full Neural Interface as one module with internal tabs.
+// (Übersicht + Cortex are live; the rest are an honest, in-app roadmap that the
+//  next build phases fill in — see SNI-PLAN.md.)
+// ════════════════════════════════════════════════════════════════════════════
+
+type TabId = "home" | "cortex" | "agents" | "network" | "reflexe" | "u1" | "security";
+
+interface TabDef {
+  id: TabId;
+  label: string;
+  /** For not-yet-built tabs: the planned functions, shown as an honest roadmap. */
+  soon?: { phase: string; lead: string; bullets: string[] };
+}
+
+const SNI_TABS: TabDef[] = [
+  { id: "home", label: "Übersicht" },
+  { id: "cortex", label: "Cortex" },
+  {
+    id: "agents", label: "Agenten",
+    soon: { phase: "Phase 1", lead: "Das Agenten-Register als Tier-Raster mit Live-Telemetrie.", bullets: ["Nach Tier gruppierte Karten (Surface · Core · Deep)", "Status-LED + CPU/RAM-Balken pro Agent", "Klick → Inspector (Rolle, Metriken, Logs, Axone, Reflexe)", "Start · Stop · Neustart pro Agent"] },
+  },
+  {
+    id: "network", label: "Netzwerk",
+    soon: { phase: "Phase 1", lead: "Axone & Reflexe als dokumentiertes Wirk-Netz.", bullets: ["Umschalter Axone (Workflows) ↔ Reflexe (Trigger)", "Detail-Modal: Workflow-Pipeline (n8n), Tech-Stack, verbundene Agenten", "Kategorie-Farbcode + Agenten-Filter", "Versionen & letzte Änderung"] },
+  },
+  {
+    id: "reflexe", label: "Reflexe",
+    soon: { phase: "Phase 2", lead: "Skripte & Workflows durchsuchbar verwalten.", bullets: ["Doppel-Tab: Reflexe (Skripte) ↔ Axone (Workflows)", "Volltext-Suche", "Berechtigungs-Badges: auto · fragen · sperren", "Aktiv/Inaktiv + Ausführungs-Zähler"] },
+  },
+  {
+    id: "u1", label: "U1",
+    soon: { phase: "Phase 2", lead: "Der Orchestrator-Raum — Steuerung, Kosten, Stimme.", bullets: ["24-Stunden-Timeline (96 Slots) mit Lupe", "Cron-Jobs + Modell-Wahl", "Kosten-Tracker (heute · Monat · Prognose)", "Text-Chat + Voice-Orb (8 Zustände, Live-Mic)"] },
+  },
+  {
+    id: "security", label: "Sicherheit",
+    soon: { phase: "Phase 2", lead: "Infrastruktur-Gesundheit + Finanz-Wächter.", bullets: ["Server-Donuts: CPU · RAM · Disk · Uptime", "Budget-Meter mit Soft/Hard-Limits", "Kosten-Chart (Verlauf + Prognose)", "Editierbare Limits + kritische Alerts"] },
+  },
+];
+
+/** Friendly display name from the signed-in email (mirrors the shell chip). */
+function nameFromEmail(email: string): string {
+  const local = (email.split("@")[0] || "").replace(/[._-]+/g, " ").trim();
+  if (!local) return "";
+  return local.split(" ").filter(Boolean).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
+function ComingTab({ def }: { def: TabDef }) {
+  const s = def.soon!;
+  return (
+    <div className="sni-soon">
+      <span className="sni-soon-phase">{s.phase} · in Arbeit</span>
+      <h2>{def.label}</h2>
+      <p>{s.lead}</p>
+      <ul className="sni-soon-list">
+        {s.bullets.map((b) => (
+          <li key={b}><span className="sni-soon-tick" />{b}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function SNIShell({ host }: { host: HostApi }) {
+  const [tab, setTab] = useState<TabId>("home");
+  const [name, setName] = useState<string>("");
+
+  // Restore the last tab + the display name.
+  useEffect(() => {
+    let on = true;
+    void host.storage.get("sni.tab").then((v) => {
+      if (on && typeof v === "string" && SNI_TABS.some((t) => t.id === v)) setTab(v as TabId);
+    });
+    const acc = host.auth.account();
+    if (acc.logged_in) setName(nameFromEmail(acc.email));
+    return () => { on = false; };
+  }, [host]);
+
+  const pick = (id: TabId) => {
+    setTab(id);
+    void host.storage.set("sni.tab", id);
+  };
+
+  const active = SNI_TABS.find((t) => t.id === tab)!;
+
+  return (
+    <div className="sni">
+      <SNIStyle />
+      <div className="sni-bar" role="tablist">
+        {SNI_TABS.map((t) => (
+          <button key={t.id} role="tab" aria-selected={tab === t.id} className={`sni-tab${tab === t.id ? " on" : ""}`} onClick={() => pick(t.id)}>
+            {t.label}
+            {t.soon && <span className="sni-tab-dot" title="in Arbeit" />}
+          </button>
+        ))}
+      </div>
+      <div className="sni-body">
+        {tab === "home" && <HomeTab name={name} />}
+        {tab === "cortex" && <CortexView host={host} />}
+        {active.soon && <ComingTab def={active} />}
+      </div>
+    </div>
+  );
+}
+
+function SNIStyle() {
+  return (
+    <style>{`
+.sni{width:100%;max-width:1240px;margin:0 auto;padding:24px 22px 48px}
+.sni-bar{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:20px;overflow-x:auto;scrollbar-width:none}
+.sni-bar::-webkit-scrollbar{display:none}
+.sni-tab{position:relative;flex:none;border:none;background:none;padding:11px 15px 13px;font:inherit;font-size:13.5px;font-weight:600;color:var(--ink3);cursor:pointer;transition:color .15s;white-space:nowrap}
+.sni-tab:hover{color:var(--ink2)}
+.sni-tab.on{color:var(--ink)}
+.sni-tab.on::after{content:"";position:absolute;left:11px;right:11px;bottom:-1px;height:2px;border-radius:2px;background:linear-gradient(90deg,#22d3ee,#06b6d4);box-shadow:0 0 8px rgba(6,182,212,.5)}
+.sni-tab-dot{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--ink3);margin-left:6px;vertical-align:middle;opacity:.6}
+.sni-body{min-height:300px}
+
+.sni-soon{max-width:560px;margin:40px auto;padding:30px 28px;text-align:left;border-radius:var(--r);background:var(--glass);backdrop-filter:blur(30px) saturate(1.7);-webkit-backdrop-filter:blur(30px) saturate(1.7);border:1px solid var(--glass-edge);box-shadow:var(--shadow),inset 0 1px 0 var(--rim)}
+.sni-soon-phase{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--cyan-d,#0891b2);background:rgba(6,182,212,.1);border:1px solid rgba(6,182,212,.24);padding:4px 11px;border-radius:999px}
+.sni-soon h2{font-size:22px;font-weight:600;letter-spacing:-.03em;margin:14px 0 6px}
+.sni-soon p{font-size:14px;color:var(--ink2);line-height:1.5}
+.sni-soon-list{list-style:none;margin:18px 0 0;padding:0;display:flex;flex-direction:column;gap:11px}
+.sni-soon-list li{display:flex;align-items:flex-start;gap:11px;font-size:13.5px;color:var(--ink);line-height:1.45}
+.sni-soon-tick{flex:none;width:7px;height:7px;border-radius:50%;margin-top:6px;background:linear-gradient(160deg,#22d3ee,#06b6d4);box-shadow:0 0 6px rgba(6,182,212,.5)}
+@media (max-width:900px){.sni{padding:18px 14px 32px}}
+`}</style>
+  );
+}
+
 let root: Root | null = null;
 let offCmd: (() => void) | null = null;
 
 const plugin: PluginModule = {
   manifest: {
-    id: "cortex",
-    name: "Cortex",
+    id: "sni",
+    name: "SNI",
     version: "1.0.0",
-    description: "Das Agenten-Nervensystem — Axone, Reflexe, Live-Status.",
+    description: "Subunit Neural Interface — das Agenten-Kontrollzentrum.",
     icon: ICON,
-    permissions: [],
+    permissions: ["storage"],
     nav: { section: "core", order: 1 },
-    commands: [{ id: "open", title: "Go to Cortex" }],
+    commands: [{ id: "open", title: "Go to SNI" }],
   },
   mount(container, host) {
     root = createRoot(container);
-    root.render(<CortexView host={host} />);
-    offCmd = host.events.on("command:cortex:open", () => host.nav.navigate("cortex"));
+    root.render(<SNIShell host={host} />);
+    offCmd = host.events.on("command:sni:open", () => host.nav.navigate("sni"));
   },
   unmount() {
     offCmd?.();

@@ -454,7 +454,7 @@ const plugin: PluginModule = {
     description: "Ingest funnel — feed documents, links and video into Atlas.",
     icon: ICON,
     permissions: ["backend:atlas-api", "notifications", "storage"],
-    nav: { section: "core", order: 2 },
+    nav: { section: "core", order: 3 },
     commands: [{ id: "open", title: "Go to Synapse" }],
   },
   mount(container, host) {

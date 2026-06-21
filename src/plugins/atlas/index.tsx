@@ -450,7 +450,7 @@ const plugin: PluginModule = {
     description: "Cited retrieval over your workspace knowledge.",
     icon: ICON,
     permissions: ["backend:atlas-api", "storage"],
-    nav: { section: "core", order: 1 },
+    nav: { section: "core", order: 2 },
     commands: [{ id: "open", title: "Go to Atlas" }],
   },
   mount(container, host) {

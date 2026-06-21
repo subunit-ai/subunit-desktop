@@ -99,6 +99,38 @@ const CHANNELS: Channel[] = [
   },
 ];
 
+/**
+ * Map a Synapse channel + source to the atlas-api ingest route + JSON body.
+ * The backend route is POST /api/m/ingest/:channel with valid channels
+ * url | youtube | meeting(text) | document(file) | social | voice — so the
+ * channel lives in the PATH, not the body. Throws a friendly Error for surfaces
+ * that need a feature we haven't shipped yet (file upload / Notion), so the user
+ * sees a clear hint instead of a raw 404.
+ */
+function resolveIngest(
+  channel: ChannelId,
+  src: string
+): { path: string; body: Record<string, unknown> } {
+  const isHttp = /^https?:\/\//i.test(src);
+  switch (channel) {
+    case "url":
+      return { path: "/api/m/ingest/url", body: { url: src } };
+    case "youtube":
+      return { path: "/api/m/ingest/youtube", body: { url: src } };
+    case "text":
+      // backend "text" channel: embeds pasted prose as a citable note.
+      return {
+        path: "/api/m/ingest/text",
+        body: { text: src, title: src.slice(0, 60).trim() || "Text-Notiz" },
+      };
+    case "document":
+      if (isHttp) return { path: "/api/m/ingest/url", body: { url: src, title: src } };
+      throw new Error("Bitte eine http(s)-URL angeben — direkter Datei-Upload kommt bald.");
+    case "notion":
+      throw new Error("Notion-Anbindung kommt bald — nutze vorerst URL, YouTube oder Text.");
+  }
+}
+
 interface Job {
   id: string;
   source: string;
@@ -177,6 +209,17 @@ function SynapseView({ host }: { host: HostApi }) {
   const submit = useCallback(async () => {
     const src = source.trim();
     if (!src || submitting) return;
+
+    // Resolve the route + body BEFORE the optimistic row, so an unsupported
+    // channel surfaces a clear hint without leaving a phantom job behind.
+    let resolved: { path: string; body: Record<string, unknown> };
+    try {
+      resolved = resolveIngest(channel, src);
+    } catch (e) {
+      setSubmitErr(e instanceof Error ? e.message : String(e));
+      return;
+    }
+
     setSubmitting(true);
     setSubmitErr(null);
     const optimistic: Job = {
@@ -188,12 +231,22 @@ function SynapseView({ host }: { host: HostApi }) {
     localRef.current = [optimistic, ...localRef.current];
     setJobs((j) => [optimistic, ...j]);
     try {
-      const res = await host.backend.fetch("atlas-api", "/api/m/ingest", {
+      const res = await host.backend.fetch("atlas-api", resolved.path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ channel, type: channel, source: src, url: src }),
+        body: JSON.stringify(resolved.body),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        // Surface the backend's error detail instead of a bare status code.
+        let detail = `HTTP ${res.status}`;
+        try {
+          const j = (await res.json()) as { error?: string; detail?: string };
+          if (j?.error) detail = j.detail ? `${j.error}: ${j.detail}` : j.error;
+        } catch {
+          /* non-JSON error body */
+        }
+        throw new Error(detail);
+      }
       setSource("");
       host.notifications.notify("Quelle eingespeist", `${active.title}: ${src}`);
       await loadJobs();

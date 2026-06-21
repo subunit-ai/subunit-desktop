@@ -79,6 +79,82 @@ function statusPill(status?: string): { cls: string; label: string } {
 // ════════════════════════════════════════════════════════════════════════════
 // Terminal pane — xterm-like view for one pty.
 // ════════════════════════════════════════════════════════════════════════════
+/**
+ * Render raw PTY bytes as readable text. Local tools (e.g. `ollama run`) draw a
+ * live spinner with ANSI escape + private-mode sequences (cursor hide, synced
+ * output, line clears) which show up as garbage in a plain <pre>. Strip those
+ * and apply carriage-return line discipline so each spinner redraw collapses to
+ * its final text. General-purpose: also cleans claude/codex output.
+ */
+function cleanTerminal(raw: string): string {
+  // Minimal terminal line-discipline: emulate the cursor so ANSI escapes, the
+  // private cursor/sync modes and the carriage-style redraws that `ollama run`'s
+  // spinner emits collapse to clean text — instead of raw bytes in a <pre>.
+  const lines: string[] = [];
+  let line = "";
+  let col = 0;
+  const put = (ch: string) => {
+    if (col === line.length) line += ch;
+    else line = line.slice(0, col) + ch + line.slice(col + 1);
+    col++;
+  };
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    if (c === "\x1b") {
+      if (raw[i + 1] === "[") {
+        // CSI: ESC [ params intermediates final
+        let j = i + 2;
+        while (j < raw.length && /[0-9;?]/.test(raw[j])) j++;
+        while (j < raw.length && raw[j] >= " " && raw[j] <= "/") j++;
+        const final = raw[j];
+        const params = raw.slice(i + 2, j).replace(/\?/g, "");
+        if (final === "G")
+          col = 0; // cursor to column 1 (spinner redraw)
+        else if (final === "K")
+          line = line.slice(0, col); // erase to end of line
+        else if (final === "D")
+          col = Math.max(0, col - (parseInt(params || "1", 10) || 1));
+        else if (final === "C") col += parseInt(params || "1", 10) || 1;
+        // colours/cursor-mode (m, h, l, …) are simply dropped
+        i = j;
+        continue;
+      }
+      if (raw[i + 1] === "]") {
+        // OSC: ESC ] ... (BEL | ST)
+        let j = i + 2;
+        while (
+          j < raw.length &&
+          raw[j] !== "\x07" &&
+          !(raw[j] === "\x1b" && raw[j + 1] === "\\")
+        )
+          j++;
+        i = raw[j] === "\x1b" ? j + 1 : j;
+        continue;
+      }
+      i += 1; // other ESC + one byte
+      continue;
+    }
+    if (c === "\n") {
+      lines.push(line);
+      line = "";
+      col = 0;
+      continue;
+    }
+    if (c === "\r") {
+      col = 0;
+      continue;
+    }
+    if (c === "\t") {
+      put(" ");
+      continue;
+    }
+    if (c < " ") continue; // drop remaining control chars
+    put(c);
+  }
+  lines.push(line);
+  return lines.join("\n").replace(/[ \t]+$/gm, "");
+}
+
 function TerminalPane({
   host,
   term,
@@ -152,7 +228,7 @@ function TerminalPane({
 
       <div className="codebox dash-codebox" ref={bodyRef}>
         {lines ? (
-          <pre className="dash-pre">{lines}</pre>
+          <pre className="dash-pre">{cleanTerminal(lines)}</pre>
         ) : (
           <div className="dash-emptyterm">
             <span className="spinner" />

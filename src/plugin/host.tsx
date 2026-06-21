@@ -34,12 +34,17 @@ import {
   onAccountChange,
 } from "../lib/auth";
 import {
+  appLatest,
+  appStatusOf,
   appVersion,
   checkForUpdates,
+  installApp,
   installUpdate,
   isTauri,
+  onAppProgress,
   onUpdateAvailable,
   onUpdateProgress,
+  openApp,
   openExternal,
 } from "../lib/ipc";
 import { BACKENDS, BACKEND_BASE_URL } from "../lib/config";
@@ -471,6 +476,55 @@ export function makeHostApi(
         let un: (() => void) | null = null;
         let cancelled = false;
         void onUpdateProgress((p) => cb(p.pct)).then((u) => {
+          if (cancelled) u();
+          else un = u;
+        });
+        return () => {
+          cancelled = true;
+          un?.();
+        };
+      },
+    },
+
+    apps: {
+      status: (appName) => {
+        gate("apps", "apps.status");
+        if (!isTauri())
+          return Promise.resolve({ installed: false, version: null });
+        return appStatusOf(appName).then((s) => ({
+          installed: s.installed,
+          version: s.version,
+        }));
+      },
+      latest: (repo) => {
+        gate("apps", "apps.latest");
+        if (!isTauri())
+          return Promise.reject(new Error("Marktplatz nur in der Desktop-App."));
+        return appLatest(repo).then((r) => ({
+          version: r.version,
+          dmgUrl: r.dmg_url,
+        }));
+      },
+      open: (bundleId, appName) => {
+        gate("apps", "apps.open");
+        if (!isTauri())
+          return Promise.reject(new Error("Marktplatz nur in der Desktop-App."));
+        return openApp(bundleId, appName);
+      },
+      install: (dmgUrl, appName, bundleId) => {
+        gate("apps", "apps.install");
+        if (!isTauri())
+          return Promise.reject(new Error("Marktplatz nur in der Desktop-App."));
+        return installApp(dmgUrl, appName, bundleId);
+      },
+      onProgress: (appName, cb) => {
+        gate("apps", "apps.onProgress");
+        if (!isTauri()) return () => {};
+        let un: (() => void) | null = null;
+        let cancelled = false;
+        void onAppProgress((p) => {
+          if (p.app === appName) cb(p.pct, p.phase);
+        }).then((u) => {
           if (cancelled) u();
           else un = u;
         });

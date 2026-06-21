@@ -66,15 +66,10 @@ const CaretIcon = () => (
   </svg>
 );
 
-/** Subunit crown brand mark — the crown emblem, cyan, with a soft sonar-ping
- *  halo (design-system .echo rings) so the dock head stays quietly alive. */
+/** Subunit crown brand mark — the real logo, monochrome (black on light, white
+ *  on dark), sized as a proper lockup. No ping, no accent tint. */
 const BrandMark = () => (
-  <span className="echo" aria-hidden>
-    <i />
-    <i />
-    <i />
-    <SubunitMark size={26} style={{ color: "var(--cyan)" }} />
-  </span>
+  <SubunitMark size={34} className="dock-brand-mark" title="Subunit" />
 );
 
 // ════════════════════════════════════════════════════════════════════════
@@ -104,43 +99,166 @@ function ThemeToggle() {
 // ════════════════════════════════════════════════════════════════════════
 // Account chip (top-right) — sign in / out via lib/auth
 // ════════════════════════════════════════════════════════════════════════
+/** A friendly display name derived from the account email local-part. */
+function deriveName(email: string): string {
+  const local = (email.split("@")[0] || "").replace(/[._-]+/g, " ").trim();
+  if (!local) return "Mein Konto";
+  return local
+    .split(" ")
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+const NAME_KEY = "subunit.displayName";
+
 function AccountChip() {
   const host = useHost();
   const [account, setAccount] = useState<Account>(host.getAccount());
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState<string>("");
+  const wrapRef = useRef<HTMLDivElement>(null);
   useEffect(() => host.onAccount(setAccount), [host]);
 
-  const initial = (account.email || "?").trim().charAt(0).toUpperCase() || "?";
+  // Display name: a stored override, else derived from the email.
+  useEffect(() => {
+    let stored = "";
+    try {
+      stored = localStorage.getItem(NAME_KEY) ?? "";
+    } catch {
+      /* storage unavailable */
+    }
+    setName(stored || (account.logged_in ? deriveName(account.email) : ""));
+  }, [account.email, account.logged_in]);
 
-  const onClick = useCallback(async () => {
+  // Close the popover on outside-click / Escape.
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setEditing(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const signIn = useCallback(async () => {
     if (busy) return;
     setBusy(true);
     try {
-      if (account.logged_in) await logout();
-      else await login();
+      await login();
     } catch (err) {
-      console.error("[shell] auth action failed:", err);
+      console.error("[shell] sign-in failed:", err);
     } finally {
       setBusy(false);
     }
-  }, [account.logged_in, busy]);
+  }, [busy]);
+
+  const signOut = useCallback(async () => {
+    if (busy) return;
+    setOpen(false);
+    setBusy(true);
+    try {
+      await logout();
+    } catch (err) {
+      console.error("[shell] sign-out failed:", err);
+    } finally {
+      setBusy(false);
+    }
+  }, [busy]);
+
+  const saveName = useCallback((v: string) => {
+    const next = v.trim();
+    setName(next);
+    setEditing(false);
+    try {
+      if (next) localStorage.setItem(NAME_KEY, next);
+      else localStorage.removeItem(NAME_KEY);
+    } catch {
+      /* storage unavailable */
+    }
+  }, []);
+
+  const initial = (name || account.email || "?").trim().charAt(0).toUpperCase() || "?";
+
+  // Signed out → the chip is a direct sign-in button (no menu).
+  if (!account.logged_in) {
+    return (
+      <button className="acct no-drag signin" disabled={busy} onClick={() => void signIn()}>
+        {busy ? <span className="acct-spin" /> : <span className="ini">→</span>}
+        <span className="acct-text">
+          <span className="acct-name">{busy ? "Verbinde…" : "Anmelden"}</span>
+        </span>
+      </button>
+    );
+  }
 
   return (
-    <button
-      className={`acct no-drag${account.logged_in ? "" : " signin"}`}
-      disabled={busy}
-      onClick={onClick}
-      title={account.logged_in ? "Sign out" : "Sign in"}
-    >
-      {busy ? <span className="acct-spin" /> : <span className="ini">{initial}</span>}
-      <span className="acct-text">
-        <span className="acct-email">
-          {account.logged_in ? account.email : busy ? "Connecting…" : "Sign in"}
+    <div className="acct-wrap no-drag" ref={wrapRef}>
+      <button
+        className="acct"
+        disabled={busy}
+        onClick={() => setOpen((o) => !o)}
+        title={name || account.email}
+      >
+        {busy ? <span className="acct-spin" /> : <span className="ini">{initial}</span>}
+        <span className="acct-text">
+          <span className="acct-name">{name || deriveName(account.email)}</span>
+          <span className="acct-plan">{account.plan}</span>
         </span>
-        {account.logged_in && <span className="acct-plan">{account.plan}</span>}
-      </span>
-      <CaretIcon />
-    </button>
+        <CaretIcon />
+      </button>
+
+      {open && (
+        <div className="acct-pop" role="menu">
+          <div className="acct-pop-head">
+            <span className="acct-pop-av">{initial}</span>
+            <div className="acct-pop-id">
+              {editing ? (
+                <input
+                  className="acct-pop-edit"
+                  defaultValue={name}
+                  autoFocus
+                  placeholder="Dein Name"
+                  onBlur={(e) => saveName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") saveName((e.target as HTMLInputElement).value);
+                    if (e.key === "Escape") setEditing(false);
+                  }}
+                />
+              ) : (
+                <button className="acct-pop-name" onClick={() => setEditing(true)} title="Namen ändern">
+                  {name || deriveName(account.email)}
+                  <svg viewBox="0 0 24 24" width={12} height={12}>
+                    <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                  </svg>
+                </button>
+              )}
+              <span className="acct-pop-mail">{account.email}</span>
+            </div>
+          </div>
+          <div className="acct-pop-row">
+            <span className="acct-pop-k">Plan</span>
+            <span className="acct-pop-v">{account.plan}</span>
+          </div>
+          <button className="acct-pop-out" onClick={() => void signOut()}>
+            <svg viewBox="0 0 24 24" width={15} height={15}>
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
+            </svg>
+            Abmelden
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -319,7 +437,12 @@ function Shell() {
       const list = await loader.discover();
       if (cancelled) return;
       setPlugins(list);
-      if (list.length) await navigate(list[0].manifest.id);
+      // Land on the Dashboard (the Ops board) by default; fall back to the first
+      // registered plugin if it isn't present.
+      const landing =
+        list.find((p) => p.manifest.id === "dashboard")?.manifest.id ??
+        list[0]?.manifest.id;
+      if (landing) await navigate(landing);
     })();
     appVersion()
       .then(setVersion)

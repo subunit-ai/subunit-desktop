@@ -55,6 +55,60 @@ export const onConfigChanged = (cb: () => void): Promise<UnlistenFn> =>
 export const onUpdateAvailable = (cb: (version: string) => void): Promise<UnlistenFn> =>
   listen<string>("subunit://update-available", (e) => cb(e.payload));
 
+// ── Marketplace: standalone Subunit apps (apps.rs) ──────────────────────────
+
+/** Whether a standalone Mac app is installed, and at what version. */
+export interface AppStatusInfo {
+  installed: boolean;
+  version: string | null;
+}
+/** Newest GitHub release of a standalone app repo + its aarch64 .dmg URL. */
+export interface LatestReleaseInfo {
+  version: string;
+  dmg_url: string;
+}
+/** Install progress for a standalone app download/install. */
+export interface AppProgressInfo {
+  app: string;
+  pct: number | null;
+  phase: string; // download | mount | install | done
+}
+
+// NOTE: Tauri command arg keys must match the Rust parameter names EXACTLY
+// (snake_case) — same convention echo-tauri uses (`invoke("…", { rects })` ↔
+// `fn …(rects: …)`). Do NOT camelCase these keys.
+
+/** Is `<appName>.app` installed in /Applications + its version. */
+export const appStatusOf = (appName: string): Promise<AppStatusInfo> =>
+  invoke("app_status", { app_name: appName });
+
+/** Newest release ("owner/name") + its aarch64 .dmg download URL. */
+export const appLatest = (repo: string): Promise<LatestReleaseInfo> =>
+  invoke("app_latest", { repo });
+
+/** Launch an installed Mac app (by bundle id, falling back to name). */
+export const openApp = (bundleId: string, appName: string): Promise<void> =>
+  invoke("open_app", { bundle_id: bundleId, app_name: appName });
+
+/** Download + install (or update) a standalone app into /Applications. The
+ *  bundle id is verified against the installed bundle before swapping it in. */
+export const installApp = (
+  dmgUrl: string,
+  appName: string,
+  bundleId: string
+): Promise<void> =>
+  invoke("install_app", {
+    dmg_url: dmgUrl,
+    app_name: appName,
+    expected_bundle_id: bundleId,
+  });
+
+/** Emitted repeatedly by Rust while a standalone app installs. */
+export const onAppProgress = (
+  cb: (p: AppProgressInfo) => void
+): Promise<UnlistenFn> =>
+  listen<AppProgressInfo>("subunit://app-progress", (e) => cb(e.payload));
+
 /** Download progress emitted by Rust during `installUpdate`. */
 export interface UpdateProgress {
   downloaded: number;

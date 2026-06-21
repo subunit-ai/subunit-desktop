@@ -5,6 +5,7 @@
 //! session (loopback-SSO ported from echo-tauri) + the app lifecycle (single
 //! instance, tray, updater). Module data flows over HTTP from the frontend.
 
+mod apps; // marketplace: detect/open/install standalone Subunit apps
 mod auth;
 mod commands;
 mod config;
@@ -84,6 +85,11 @@ pub fn run() {
             terminal::kill_terminal,
             // External plugin discovery (terminal.rs).
             terminal::list_plugins,
+            // Marketplace: standalone app detect/open/install (apps.rs).
+            apps::app_status,
+            apps::app_latest,
+            apps::open_app,
+            apps::install_app,
         ])
         .setup(|app| {
             log::info!(

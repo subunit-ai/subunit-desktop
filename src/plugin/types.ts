@@ -54,6 +54,7 @@ export type Permission =
   | "notifications" // notifications.notify
   | "storage" // storage.get / set (per-plugin namespaced)
   | "updater" // updater.version / check / install / onAvailable (app self-update)
+  | "apps" // marketplace: detect/open/install standalone Subunit apps
   | (string & {}); // forward-compatible: unknown permissions are simply ungranted
 
 /**
@@ -261,6 +262,45 @@ export interface HostUpdater {
   onProgress(cb: (pct: number | null) => void): () => void;
 }
 
+/** A standalone Subunit app's install state (Echo, Sonar, …). */
+export interface AppInstallState {
+  installed: boolean;
+  /** Installed bundle version, or null when not installed / unreadable. */
+  version: string | null;
+}
+
+/** Newest release of a standalone app + the download URL of its installer. */
+export interface AppRelease {
+  version: string;
+  dmgUrl: string;
+}
+
+/**
+ * Marketplace surface — manage standalone Subunit Mac apps (Echo, Sonar) the way
+ * Adobe Creative Cloud does: detect installed, fetch the newest release, install
+ * /update into /Applications, and launch. Permission-gated by "apps".
+ */
+export interface HostApps {
+  /** Is `<appName>.app` installed in /Applications, and at what version. */
+  status(appName: string): Promise<AppInstallState>;
+  /** Newest release of a public repo ("owner/name") + its installer URL. */
+  latest(repo: string): Promise<AppRelease>;
+  /** Launch an installed Mac app (by bundle id, falling back to its name). */
+  open(bundleId: string, appName: string): Promise<void>;
+  /**
+   * Download + install (or update) the app into /Applications. The installed
+   * bundle's identifier is verified against `bundleId` before it is swapped in.
+   * Resolves when the new bundle is in place; rejects (leaving any existing app
+   * intact) on failure.
+   */
+  install(dmgUrl: string, appName: string, bundleId: string): Promise<void>;
+  /** Subscribe to install progress for one app; returns an unsubscribe fn. */
+  onProgress(
+    appName: string,
+    cb: (pct: number | null, phase: string) => void
+  ): () => void;
+}
+
 export interface HostUi {
   /** Current theme. */
   theme(): "light" | "dark";
@@ -305,5 +345,6 @@ export interface HostApi {
   notifications: HostNotifications;
   storage: HostStorage;
   updater: HostUpdater;
+  apps: HostApps;
   ui: HostUi;
 }

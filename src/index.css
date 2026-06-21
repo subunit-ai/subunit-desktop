@@ -72,58 +72,23 @@ body {
   -webkit-app-region: drag; /* titlebar-less; the dock top is draggable */
 }
 
-/* Brand mark at the dock head — Subunit crown + sonar-ping halo. */
+/* Brand mark at the dock head — the real Subunit logo, monochrome + bold. */
 .dock-brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 8px 18px;
-  margin-bottom: 4px;
+  gap: 12px;
+  padding: 8px 10px 20px;
+  margin-bottom: 6px;
   -webkit-app-region: drag;
 }
-.dock-brand .echo {
-  position: relative;
-  width: 26px;
-  height: 26px;
-  display: grid;
-  place-items: center;
+.dock-brand-mark {
   flex: none;
-}
-.dock-brand .echo svg {
-  position: relative;
-  z-index: 1;
-  width: 26px;
-  height: 26px;
-  filter: drop-shadow(0 3px 9px rgba(6, 182, 212, 0.35));
-}
-.dock-brand .echo i {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 26px;
-  height: 26px;
-  margin: -13px 0 0 -13px;
-  border-radius: 50%;
-  border: 1.5px solid var(--cyan);
-  opacity: 0;
-  pointer-events: none;
-  animation: brandping 6s cubic-bezier(0.2, 0.55, 0.35, 1) infinite;
-}
-.dock-brand .echo i:nth-child(2) {
-  animation-delay: 2s;
-}
-.dock-brand .echo i:nth-child(3) {
-  animation-delay: 4s;
-}
-@media (prefers-reduced-motion: reduce) {
-  .dock-brand .echo i {
-    display: none;
-  }
+  color: var(--ink); /* black on light, white on dark — never tinted */
 }
 .dock-brand b {
-  font-size: 16.5px;
-  font-weight: 650;
-  letter-spacing: -0.02em;
+  font-size: 19px;
+  font-weight: 680;
+  letter-spacing: -0.03em;
   color: var(--ink);
 }
 
@@ -263,14 +228,11 @@ body {
   box-shadow: inset 0 1px 0 var(--rim);
   -webkit-app-region: drag;
 }
-/* Subunit crown in the titlebar — cyan accent, calm. */
+/* Subunit crown in the titlebar — monochrome, matches the dock head. */
 .titlebar-mark {
   flex: none;
-  color: var(--cyan-d);
-  filter: drop-shadow(0 2px 6px rgba(6, 182, 212, 0.3));
-}
-html.dark .titlebar-mark {
-  color: var(--cyan);
+  color: var(--ink);
+  opacity: 0.9;
 }
 .titlebar-title {
   display: flex;
@@ -403,7 +365,7 @@ html.dark .titlebar-mark {
   min-width: 0;
   max-width: 180px;
 }
-.acct-email {
+.acct-name {
   font-size: 12.5px;
   font-weight: 600;
   line-height: 1.2;
@@ -426,6 +388,147 @@ html.dark .titlebar-mark {
   border: 2px solid var(--line);
   border-top-color: var(--cyan);
   animation: spin 0.8s linear infinite;
+}
+
+/* Account popover — a glass dropdown menu (NOT an instant logout). */
+.acct-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.acct-pop {
+  position: absolute;
+  top: calc(100% + 9px);
+  right: 0;
+  z-index: 220;
+  width: 264px;
+  display: flex;
+  flex-direction: column;
+  padding: 7px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--glass-edge2);
+  background: var(--menu-bg, var(--glass));
+  backdrop-filter: blur(34px) saturate(1.7);
+  -webkit-backdrop-filter: blur(34px) saturate(1.7);
+  box-shadow: var(--shadow), inset 0 1px 0 var(--rim);
+  animation: cmdk-pop 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.acct-pop-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 11px 12px;
+}
+.acct-pop-av {
+  width: 42px;
+  height: 42px;
+  flex: none;
+  border-radius: 50%;
+  background: linear-gradient(160deg, #22d3ee, #06b6d4);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 17px;
+  box-shadow: 0 6px 16px -6px rgba(6, 182, 212, 0.6);
+}
+.acct-pop-id {
+  min-width: 0;
+  flex: 1;
+}
+.acct-pop-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.acct-pop-name svg {
+  opacity: 0;
+  fill: none;
+  stroke: var(--ink3);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: opacity 0.15s;
+}
+.acct-pop-name:hover svg {
+  opacity: 1;
+}
+.acct-pop-edit {
+  width: 100%;
+  border: 1px solid var(--cyan);
+  background: var(--fill-weak);
+  border-radius: 9px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  outline: none;
+}
+.acct-pop-mail {
+  display: block;
+  font-size: 11.5px;
+  color: var(--ink3);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.acct-pop-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  margin: 2px 4px;
+  border-radius: 10px;
+  background: var(--fill-weak);
+}
+.acct-pop-k {
+  font-size: 12px;
+  color: var(--ink2);
+}
+.acct-pop-v {
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--cyan-d, #0891b2);
+}
+.acct-pop-out {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  margin-top: 4px;
+  padding: 11px 12px;
+  border: none;
+  border-radius: 11px;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+  transition: background 0.15s, color 0.15s;
+}
+.acct-pop-out svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.acct-pop-out:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
 }
 
 /* ============================================================

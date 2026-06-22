@@ -63,7 +63,6 @@ const MODULES: ModuleApp[] = [
   { id: "dashboard", name: "Dashboard", tagline: "Ops-Board — Aufgaben & Terminals", pluginId: "dashboard", accent: "#36d399", icon: "M3 3h7v9H3z|M14 3h7v5h-7z|M14 12h7v9h-7z|M3 16h7v5H3z" },
   { id: "chat", name: "Chat", tagline: "u1 im Gespräch", pluginId: "chat", accent: "#a78bfa", icon: "M21 11.5a8.4 8.4 0 0 1-12 7.6L3 21l1.9-5.8A8.4 8.4 0 1 1 21 11.5Z" },
   { id: "call", name: "Call", tagline: "Voice-Anrufe, live transkribiert", pluginId: "call", accent: "#38bdf8", icon: "M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.4-1.2a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2Z" },
-  { id: "echo", name: "Echo", tagline: "Diktat in Subunit", pluginId: "echo", accent: "#22d3ee", icon: "M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z|M5 11a7 7 0 0 0 14 0|M12 18v3" },
 ];
 
 function cmpVersion(a: string, b: string): number {

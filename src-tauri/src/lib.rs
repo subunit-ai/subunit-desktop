@@ -7,6 +7,7 @@
 
 mod apps; // marketplace: detect/open/install standalone Subunit apps
 mod auth;
+mod ingest; // synapse → real n8n axon-ingest webhooks
 mod commands;
 mod config;
 mod http; // shared pooled HTTP client for the cloud auth path
@@ -90,6 +91,8 @@ pub fn run() {
             apps::app_latest,
             apps::open_app,
             apps::install_app,
+            // Synapse → real n8n webhooks (ingest.rs).
+            ingest::synapse_ingest,
         ])
         .setup(|app| {
             log::info!(

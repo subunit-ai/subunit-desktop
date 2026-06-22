@@ -109,6 +109,21 @@ export const onAppProgress = (
 ): Promise<UnlistenFn> =>
   listen<AppProgressInfo>("subunit://app-progress", (e) => cb(e.payload));
 
+// ── Synapse → real n8n webhooks (ingest.rs) ────────────────────────────────
+
+/** Result of a Synapse webhook POST. */
+export interface SynapseIngestResult {
+  ok: boolean;
+  status: number;
+}
+
+/** POST a JSON payload to the n8n Synapse webhook for `channel` (server-side). */
+export const synapseIngest = (
+  channel: string,
+  payload: Record<string, unknown>
+): Promise<SynapseIngestResult> =>
+  invoke("synapse_ingest", { channel, payload });
+
 /** Download progress emitted by Rust during `installUpdate`. */
 export interface UpdateProgress {
   downloaded: number;

@@ -9,10 +9,10 @@
  * Native Subunit Liquid Glass: selection tiles (.tiles/.tile/.sel/.ck), a glass
  * field, and a status .list with pills. ONE cyan accent.
  *
- * Permissions: backend:atlas-api, notifications, storage.
+ * Permissions: ingest (n8n webhooks), notifications, storage.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { HostApi, PluginModule } from "../../plugin/types";
 
@@ -99,33 +99,29 @@ const CHANNELS: Channel[] = [
   },
 ];
 
+type Webhook = "website" | "youtube" | "document";
+
 /**
- * Map a Synapse channel + source to the atlas-api ingest route + JSON body.
- * The backend route is POST /api/m/ingest/:channel with valid channels
- * url | youtube | meeting(text) | document(file) | social | voice — so the
- * channel lives in the PATH, not the body. Throws a friendly Error for surfaces
- * that need a feature we haven't shipped yet (file upload / Notion), so the user
- * sees a clear hint instead of a raw 404.
+ * Map a Synapse channel + source to the REAL n8n axon-ingest webhook + payload.
+ * The production pipeline runs as n8n workflows at
+ * n8n.subunit.ai/webhook/synapse/<wh>: website {url}, youtube {url}, document
+ * {source,text,type}. Throws a friendly hint for surfaces without a webhook yet.
  */
-function resolveIngest(
+function resolveWebhook(
   channel: ChannelId,
   src: string
-): { path: string; body: Record<string, unknown> } {
+): { wh: Webhook; payload: Record<string, unknown> } {
   const isHttp = /^https?:\/\//i.test(src);
   switch (channel) {
     case "url":
-      return { path: "/api/m/ingest/url", body: { url: src } };
+      return { wh: "website", payload: { url: src } };
     case "youtube":
-      return { path: "/api/m/ingest/youtube", body: { url: src } };
+      return { wh: "youtube", payload: { url: src } };
     case "text":
-      // backend "text" channel: embeds pasted prose as a citable note.
-      return {
-        path: "/api/m/ingest/text",
-        body: { text: src, title: src.slice(0, 60).trim() || "Text-Notiz" },
-      };
+      return { wh: "document", payload: { source: src.slice(0, 60).trim() || "Text-Notiz", text: src, type: "text" } };
     case "document":
-      if (isHttp) return { path: "/api/m/ingest/url", body: { url: src, title: src } };
-      throw new Error("Bitte eine http(s)-URL angeben — direkter Datei-Upload kommt bald.");
+      if (isHttp) return { wh: "website", payload: { url: src } };
+      throw new Error("Lokale Dateien kommen bald — füge Text ein oder gib eine http(s)-URL an.");
     case "notion":
       throw new Error("Notion-Anbindung kommt bald — nutze vorerst URL, YouTube oder Text.");
   }
@@ -135,37 +131,15 @@ interface Job {
   id: string;
   source: string;
   channel?: string;
-  status: string; // queued | processing | done | failed | …
-  progress?: number;
+  status: string; // sent | failed
   error?: string;
 }
 
 function jobPill(status: string): { cls: string; label: string } {
   const s = status.toLowerCase();
-  if (/done|complete|ready|indexed/.test(s)) return { cls: "live", label: "Fertig" };
   if (/fail|error/.test(s)) return { cls: "wait", label: "Fehler" };
-  if (/process|running|ingest|embed/.test(s))
-    return { cls: "wait", label: "Verarbeite" };
-  return { cls: "gone", label: "Queued" };
-}
-
-function normalizeJobs(raw: unknown): Job[] {
-  const arr = Array.isArray(raw)
-    ? raw
-    : Array.isArray((raw as Record<string, unknown>)?.jobs)
-      ? ((raw as Record<string, unknown>).jobs as unknown[])
-      : [];
-  return arr.map((r, i) => {
-    const o = (r ?? {}) as Record<string, unknown>;
-    return {
-      id: String(o.id ?? o.job_id ?? `job-${i}`),
-      source: String(o.source ?? o.url ?? o.title ?? o.name ?? "—"),
-      channel: typeof o.channel === "string" ? o.channel : (typeof o.type === "string" ? o.type : undefined),
-      status: String(o.status ?? o.state ?? "queued"),
-      progress: typeof o.progress === "number" ? o.progress : undefined,
-      error: typeof o.error === "string" ? o.error : undefined,
-    };
-  });
+  if (/sent|queued|done/.test(s)) return { cls: "live", label: "Gesendet" };
+  return { cls: "gone", label: "—" };
 }
 
 function SynapseView({ host }: { host: HostApi }) {
@@ -174,47 +148,21 @@ function SynapseView({ host }: { host: HostApi }) {
   const [submitting, setSubmitting] = useState(false);
   const [submitErr, setSubmitErr] = useState<string | null>(null);
 
+  // Sources sent to the Synapse pipeline this session. n8n processes async and
+  // exposes no per-job status API, so this is the session's submission log.
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [jobsErr, setJobsErr] = useState<string | null>(null);
-  const [jobsLoading, setJobsLoading] = useState(true);
-  // Optimistic jobs added locally before the backend reflects them.
-  const localRef = useRef<Job[]>([]);
 
   const active = CHANNELS.find((c) => c.id === channel)!;
-
-  const loadJobs = useCallback(async () => {
-    try {
-      const res = await host.backend.fetch("atlas-api", "/api/m/jobs");
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      const server = normalizeJobs(data);
-      // Drop local optimistic entries the server now knows about.
-      const serverIds = new Set(server.map((j) => j.id));
-      localRef.current = localRef.current.filter((j) => !serverIds.has(j.id));
-      setJobs([...localRef.current, ...server]);
-      setJobsErr(null);
-    } catch (err) {
-      setJobsErr(err instanceof Error ? err.message : String(err));
-    } finally {
-      setJobsLoading(false);
-    }
-  }, [host]);
-
-  useEffect(() => {
-    void loadJobs();
-    const iv = window.setInterval(() => void loadJobs(), 3000);
-    return () => window.clearInterval(iv);
-  }, [loadJobs]);
 
   const submit = useCallback(async () => {
     const src = source.trim();
     if (!src || submitting) return;
 
-    // Resolve the route + body BEFORE the optimistic row, so an unsupported
-    // channel surfaces a clear hint without leaving a phantom job behind.
-    let resolved: { path: string; body: Record<string, unknown> };
+    // Resolve the webhook + payload BEFORE the optimistic row, so an unsupported
+    // channel surfaces a clear hint without leaving a phantom entry behind.
+    let resolved: { wh: Webhook; payload: Record<string, unknown> };
     try {
-      resolved = resolveIngest(channel, src);
+      resolved = resolveWebhook(channel, src);
     } catch (e) {
       setSubmitErr(e instanceof Error ? e.message : String(e));
       return;
@@ -222,47 +170,23 @@ function SynapseView({ host }: { host: HostApi }) {
 
     setSubmitting(true);
     setSubmitErr(null);
-    const optimistic: Job = {
-      id: `local-${Date.now()}`,
-      source: src,
-      channel,
-      status: "queued",
-    };
-    localRef.current = [optimistic, ...localRef.current];
-    setJobs((j) => [optimistic, ...j]);
+    const id = `s-${Date.now()}`;
+    const optimistic: Job = { id, source: src, channel, status: "sending" };
+    setJobs((j) => [optimistic, ...j].slice(0, 12));
     try {
-      const res = await host.backend.fetch("atlas-api", resolved.path, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(resolved.body),
-      });
-      if (!res.ok) {
-        // Surface the backend's error detail instead of a bare status code.
-        let detail = `HTTP ${res.status}`;
-        try {
-          const j = (await res.json()) as { error?: string; detail?: string };
-          if (j?.error) detail = j.detail ? `${j.error}: ${j.detail}` : j.error;
-        } catch {
-          /* non-JSON error body */
-        }
-        throw new Error(detail);
-      }
+      const res = await host.ingest.send(resolved.wh, resolved.payload);
+      if (!res.ok) throw new Error(`n8n ${res.status}`);
       setSource("");
-      host.notifications.notify("Quelle eingespeist", `${active.title}: ${src}`);
-      await loadJobs();
+      setJobs((js) => js.map((j) => (j.id === id ? { ...j, status: "sent" } : j)));
+      host.notifications.notify("An Synapse gesendet", `${active.title}: ${src}`);
     } catch (err) {
-      // Roll the optimistic row back to a failed state so it's visible.
-      localRef.current = localRef.current.map((j) =>
-        j.id === optimistic.id ? { ...j, status: "failed" } : j
-      );
-      setJobs((js) =>
-        js.map((j) => (j.id === optimistic.id ? { ...j, status: "failed" } : j))
-      );
-      setSubmitErr(err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      setJobs((js) => js.map((j) => (j.id === id ? { ...j, status: "failed", error: msg } : j)));
+      setSubmitErr(msg);
     } finally {
       setSubmitting(false);
     }
-  }, [active.title, channel, host, loadJobs, source, submitting]);
+  }, [active.title, channel, host, source, submitting]);
 
   return (
     <div className="syn">
@@ -345,39 +269,22 @@ function SynapseView({ host }: { host: HostApi }) {
           </button>
         </section>
 
-        {/* ── jobs ── */}
+        {/* ── pipeline log ── */}
         <aside className="syn-jobs">
           <div className="syn-jobs-head">
             <div className="sect" style={{ margin: 0 }}>
-              Jobs {jobs.length > 0 && <span className="badge">{jobs.length}</span>}
+              Pipeline {jobs.length > 0 && <span className="badge">{jobs.length}</span>}
             </div>
-            <button
-              className="iconbtn syn-mini"
-              title="Aktualisieren"
-              onClick={() => void loadJobs()}
-            >
-              <span className="ic">
-                <Svg d="M21 12a9 9 0 1 1-3-6.7|21 4v4h-4" />
-              </span>
-            </button>
+            <span className="syn-wh" title="Läuft über die n8n-Webhooks">n8n</span>
           </div>
 
-          {jobsErr && (
-            <div className="syn-joberr">Jobs-Endpoint nicht erreichbar · {jobsErr}</div>
-          )}
-
-          {jobsLoading && jobs.length === 0 ? (
-            <div className="syn-jobs-empty">
-              <span className="spinner" />
-              Lade Jobs…
-            </div>
-          ) : jobs.length === 0 ? (
+          {jobs.length === 0 ? (
             <div className="syn-jobs-empty">
               <span className="syn-empty-ic">
                 <Svg d="M4 7h16|4 12h16|4 17h10" />
               </span>
-              <b>Noch keine Jobs</b>
-              <span>Eingespeiste Quellen erscheinen hier mit Live-Status.</span>
+              <b>Bereit</b>
+              <span>Eingespeiste Quellen gehen an die Synapse-Pipeline (n8n) und erscheinen hier.</span>
             </div>
           ) : (
             <ul className="list syn-joblist">
@@ -425,6 +332,7 @@ function SynapseStyle() {
 
 .syn-jobs{background:var(--glass);backdrop-filter:blur(34px) saturate(1.7);-webkit-backdrop-filter:blur(34px) saturate(1.7);border:1px solid var(--glass-edge);border-radius:var(--r);box-shadow:var(--shadow),inset 0 1px 0 var(--rim);padding:18px;position:sticky;top:8px}
 .syn-jobs-head{display:flex;align-items:center;justify-content:space-between}
+.syn-wh{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--cyan-d,#0891b2);background:rgba(6,182,212,.1);border:1px solid rgba(6,182,212,.24);padding:3px 8px;border-radius:7px}
 .syn-mini{width:auto}
 .syn-mini .ic{width:32px;height:32px;border-radius:10px}
 .syn-mini .ic svg{width:16px;height:16px}
@@ -453,7 +361,7 @@ const plugin: PluginModule = {
     version: "1.0.0",
     description: "Ingest funnel — feed documents, links and video into Atlas.",
     icon: ICON,
-    permissions: ["backend:atlas-api", "notifications", "storage"],
+    permissions: ["ingest", "notifications", "storage"],
     nav: { section: "core", order: 3 },
     commands: [{ id: "open", title: "Go to Synapse" }],
   },

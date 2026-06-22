@@ -46,6 +46,7 @@ import {
   onUpdateProgress,
   openApp,
   openExternal,
+  synapseIngest,
 } from "../lib/ipc";
 import { BACKENDS, BACKEND_BASE_URL } from "../lib/config";
 import type {
@@ -532,6 +533,18 @@ export function makeHostApi(
           cancelled = true;
           un?.();
         };
+      },
+    },
+
+    ingest: {
+      channels: ["website", "youtube", "document", "meeting"] as const,
+      send: (channel, payload) => {
+        gate("ingest", "ingest.send");
+        if (!isTauri())
+          return Promise.reject(
+            new Error("Synapse-Ingest läuft nur in der Desktop-App.")
+          );
+        return synapseIngest(channel, payload);
       },
     },
 

@@ -55,6 +55,7 @@ export type Permission =
   | "storage" // storage.get / set (per-plugin namespaced)
   | "updater" // updater.version / check / install / onAvailable (app self-update)
   | "apps" // marketplace: detect/open/install standalone Subunit apps
+  | "ingest" // synapse.ingest → the real n8n axon-ingest webhooks
   | (string & {}); // forward-compatible: unknown permissions are simply ungranted
 
 /**
@@ -301,6 +302,21 @@ export interface HostApps {
   ): () => void;
 }
 
+/**
+ * Synapse ingest — POST a source to the REAL n8n axon-ingest webhooks
+ * (n8n.subunit.ai/webhook/synapse/<channel>), routed server-side so the browser
+ * CORS/CSP constraints don't apply. Permission-gated by "ingest".
+ */
+export interface HostIngest {
+  /** Channels backed by a real n8n webhook. */
+  channels: readonly ["website", "youtube", "document", "meeting"];
+  /** POST `payload` (JSON) to the n8n Synapse webhook for `channel`. */
+  send(
+    channel: "website" | "youtube" | "document" | "meeting",
+    payload: Record<string, unknown>
+  ): Promise<{ ok: boolean; status: number }>;
+}
+
 export interface HostUi {
   /** Current theme. */
   theme(): "light" | "dark";
@@ -348,5 +364,6 @@ export interface HostApi {
   storage: HostStorage;
   updater: HostUpdater;
   apps: HostApps;
+  ingest: HostIngest;
   ui: HostUi;
 }

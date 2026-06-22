@@ -9,7 +9,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AGENTS, LOG_TEMPLATES, TIER_CONFIG, orchestratorOf, type Tier } from "../agents";
+import { AGENTS, LOG_TEMPLATES, TIER_CONFIG, orchestratorOf, skillsOf, type Tier } from "../agents";
 
 function greeting(h: number): string {
   if (h < 5) return "Gute Nacht";
@@ -23,18 +23,19 @@ const TYPE_DOT: Record<string, string> = { info: "#38bdf8", success: "#34d399", 
 export default function HomeTab({ name }: { name: string }) {
   const u1 = useMemo(() => orchestratorOf(AGENTS), []);
   const stats = useMemo(() => {
-    const running = AGENTS.filter((a) => a.status === "running").length;
+    const skills = skillsOf(AGENTS);
+    const running = skills.filter((a) => a.status === "running").length;
     const cpu = AGENTS.reduce((s, a) => s + a.cpu, 0);
     const mem = AGENTS.reduce((s, a) => s + a.mem, 0);
-    // System integrity = running ratio, lightly weighted.
-    const integrity = Math.round((running / AGENTS.length) * 100);
+    // System integrity = active-skills ratio.
+    const integrity = Math.round((running / skills.length) * 100);
     const byTier = (Object.keys(TIER_CONFIG) as Tier[]).map((t) => ({
       tier: t,
       ...TIER_CONFIG[t],
-      count: AGENTS.filter((a) => a.tier === t).length,
-      active: AGENTS.filter((a) => a.tier === t && a.status === "running").length,
-    }));
-    return { running, total: AGENTS.length, cpu, mem, integrity, byTier };
+      count: skills.filter((a) => a.tier === t).length,
+      active: skills.filter((a) => a.tier === t && a.status === "running").length,
+    })).filter((g) => g.count > 0);
+    return { running, total: skills.length, cpu, mem, integrity, byTier };
   }, []);
 
   const greet = useMemo(() => greeting(new Date().getHours()), []);
@@ -69,7 +70,7 @@ export default function HomeTab({ name }: { name: string }) {
       <div className="sh-greet">
         <div className="sh-greet-tx">
           <h1>{greet}{name ? `, ${name}` : ""}.</h1>
-          <p>Dein Agenten-Netzwerk ist online — {stats.running} von {stats.total} Agenten aktiv.</p>
+          <p>U1 ist online — {stats.running} von {stats.total} Skills aktiv.</p>
         </div>
         <div className="sh-integrity">
           <svg viewBox="0 0 130 130" className="sh-ring">
@@ -84,7 +85,7 @@ export default function HomeTab({ name }: { name: string }) {
       </div>
 
       <div className="sh-stats">
-        <Stat v={`${stats.running}/${stats.total}`} k="Agenten aktiv" accent />
+        <Stat v={`${stats.running}/${stats.total}`} k="Skills aktiv" accent />
         <Stat v={`${stats.cpu}%`} k="Σ CPU-Last" />
         <Stat v={`${(stats.mem / 1000).toFixed(2)} GB`} k="Σ RAM" />
         <Stat v="14d 06h" k="Uptime" />
@@ -100,7 +101,7 @@ export default function HomeTab({ name }: { name: string }) {
               <div className="sh-u1-id">
                 <div className="sh-u1-name">{u1.name}</div>
                 <div className="sh-u1-role">{u1.role}</div>
-                <div className="sh-u1-meta">{u1.cpu}% CPU · {u1.mem} MB · {u1.axone.length} Axone</div>
+                <div className="sh-u1-meta">{u1.cpu}% CPU · {u1.mem} MB · {u1.axone.length} Skills</div>
               </div>
             </div>
           )}

@@ -51,41 +51,19 @@ interface ModuleApp {
   accent: string;
 }
 
-interface AgentSkill {
-  code: string;
-  name: string;
-  emoji: string;
-  tier: "surface" | "core" | "deep";
-  desc: string;
-  features: string[];
-  price: string;
-  status: "ready" | "available" | "development" | "planned";
-}
-
 const STANDALONE: StandaloneApp[] = [
   { id: "echo", name: "Echo", tagline: "Diktat & Meeting-Transkription", appName: "Echo", bundleId: "ai.subunit.echo", repo: "subunit-ai/echo-tauri", iconImg: "/app-echo.png" },
   { id: "sonar", name: "Sonar", tagline: "Eigenständige Subunit-App", appName: "Sonar", bundleId: "ai.subunit.sonar", repo: "subunit-ai/sonar-tauri", iconImg: "/app-sonar.png" },
 ];
 
 const MODULES: ModuleApp[] = [
-  { id: "sni", name: "SNI", tagline: "Neural Interface — das Agenten-Kontrollzentrum", pluginId: "sni", accent: "#06b6d4", icon: "M12 5a3 3 0 1 0-2.6-4.5|M12 9.6v2.4|M10 11 6.9 8.6|M14 11l3.1-2.4" },
+  { id: "sni", name: "SNI", tagline: "Neural Interface — U1 und seine Skills", pluginId: "sni", accent: "#06b6d4", icon: "M12 5a3 3 0 1 0-2.6-4.5|M12 9.6v2.4|M10 11 6.9 8.6|M14 11l3.1-2.4" },
   { id: "atlas", name: "Atlas", tagline: "Wissens-Recherche mit Quellen", pluginId: "atlas", accent: "#fbbf24", icon: "M4 19.5A2.5 2.5 0 0 1 6.5 17H20|M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z" },
   { id: "synapse", name: "Synapse", tagline: "Wissens-Ingest — die Datenkrake", pluginId: "synapse", accent: "#06b6d4", icon: "M12 5a3 3 0 1 0 0-.01|M5 12a3 3 0 1 0 0-.01|M19 12a3 3 0 1 0 0-.01|M12 8v3|M9.6 13.4 7 11.6|M14.4 13.4 17 11.6" },
   { id: "dashboard", name: "Dashboard", tagline: "Ops-Board — Aufgaben & Terminals", pluginId: "dashboard", accent: "#36d399", icon: "M3 3h7v9H3z|M14 3h7v5h-7z|M14 12h7v9h-7z|M3 16h7v5H3z" },
   { id: "chat", name: "Chat", tagline: "u1 im Gespräch", pluginId: "chat", accent: "#a78bfa", icon: "M21 11.5a8.4 8.4 0 0 1-12 7.6L3 21l1.9-5.8A8.4 8.4 0 1 1 21 11.5Z" },
   { id: "call", name: "Call", tagline: "Voice-Anrufe, live transkribiert", pluginId: "call", accent: "#38bdf8", icon: "M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.4-1.2a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2Z" },
   { id: "echo", name: "Echo", tagline: "Diktat in Subunit", pluginId: "echo", accent: "#22d3ee", icon: "M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z|M5 11a7 7 0 0 0 14 0|M12 18v3" },
-];
-
-// SNI agent-skill catalogue (ported from subunit-ai/sni MARKETPLACE_ITEMS).
-const SKILLS: AgentSkill[] = [
-  { code: "S-13", name: "Architect", emoji: "🏗️", tier: "core", status: "ready", price: "349€/mo", desc: "Automatisches n8n Workflow-Deployment, Axon-Builder, Infrastructure-as-Code für Agent-Stacks.", features: ["n8n Auto-Deploy", "Axon-Builder", "Infrastructure-as-Code"] },
-  { code: "S-12", name: "Memory Agent", emoji: "🧠", tier: "deep", status: "development", price: "249€/mo", desc: "Langzeit-Gedächtnis mit Embeddings, semantische Suche, ChromaDB-Backend — lernt aus jeder Interaktion.", features: ["Embedding-Speicher", "Semantische Suche", "Kontext-Recall"] },
-  { code: "S-00", name: "Sentinel", emoji: "🛡️", tier: "deep", status: "development", price: "199€/mo", desc: "Security-Überwachung, Kosten-Tracking, API-Nutzungsanalyse und Anomalie-Erkennung.", features: ["Threat-Detection", "API-Usage-Monitoring", "Kosten-Alerts"] },
-  { code: "S-14", name: "Pulse", emoji: "⚡", tier: "core", status: "planned", price: "199€/mo", desc: "LLM-Routing & Kosten-Optimierung — wählt automatisch das beste Modell je nach Task und Budget.", features: ["Multi-LLM-Router", "Auto-Modellwahl", "Budget-Limits"] },
-  { code: "S-15", name: "Librarian", emoji: "📚", tier: "surface", status: "planned", price: "149€/mo", desc: "Workspace-Organisation, automatische Archivierung, Dokumenten-Lifecycle-Management.", features: ["Auto-Archivierung", "Tag-System", "Retention-Policies"] },
-  { code: "S-16", name: "Sync Agent", emoji: "🔄", tier: "surface", status: "planned", price: "149€/mo", desc: "Automatische Datensynchronisation zwischen allen Axonen — CRM, Mail, Kalender, Knowledge Base.", features: ["Bi-direktionaler Sync", "Conflict Resolution", "Delta-Updates"] },
-  { code: "S-XX", name: "Custom Agent", emoji: "⚙️", tier: "deep", status: "available", price: "Auf Anfrage", desc: "Maßgeschneiderter KI-Agent nach Ihren Anforderungen — wir bauen, was Ihr Business braucht.", features: ["Individuelles Design", "Custom API-Anbindungen", "SLA-Garantie"] },
 ];
 
 function cmpVersion(a: string, b: string): number {
@@ -224,56 +202,12 @@ function ModuleCard({ host, mod }: { host: HostApi; mod: ModuleApp }) {
   );
 }
 
-// ── AGENTEN: agent-skill card ────────────────────────────────────────────────
-const SKILL_STATUS: Record<AgentSkill["status"], { label: string; cls: string; cta: string | null }> = {
-  ready: { label: "Verfügbar", cls: "ok", cta: "Aktivieren" },
-  available: { label: "Auf Anfrage", cls: "ok", cta: "Anfragen" },
-  development: { label: "In Entwicklung", cls: "dev", cta: null },
-  planned: { label: "Geplant", cls: "plan", cta: null },
-};
-
-function SkillCard({ host, skill }: { host: HostApi; skill: AgentSkill }) {
-  const s = SKILL_STATUS[skill.status];
-  return (
-    <div className="mk-card mk-skill">
-      <span className="mk-ic mk-ic-skill">{skill.emoji}</span>
-      <div className="mk-tx">
-        <div className="mk-name">
-          {skill.name}
-          <span className="mk-code">{skill.code}</span>
-          <span className={`mk-badge mk-st-${s.cls}`}>{s.label}</span>
-        </div>
-        <div className="mk-tag">{skill.desc}</div>
-        <div className="mk-feats">
-          {skill.features.map((f) => (
-            <span key={f} className="mk-feat">{f}</span>
-          ))}
-        </div>
-      </div>
-      <div className="mk-act mk-act-col">
-        <span className="mk-price">{skill.price}</span>
-        {s.cta ? (
-          <button
-            className="btn btn-primary minibtn"
-            onClick={() => host.notifications.notify(`${skill.name}`, "Aktivierung wird mit dem Agentur-Backend verbunden — kommt bald.")}
-          >
-            {s.cta}
-          </button>
-        ) : (
-          <span className="mk-soon">bald</span>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ── view ─────────────────────────────────────────────────────────────────────
-type Tab = "programme" | "plugins" | "agenten";
+type Tab = "programme" | "plugins";
 
 const TABS: { id: Tab; label: string; hint: string }[] = [
   { id: "programme", label: "Programme", hint: "Standalone-Apps für deinen Mac" },
   { id: "plugins", label: "Plugins", hint: "Module direkt in Subunit" },
-  { id: "agenten", label: "Agenten", hint: "Agent-Skills fürs Netzwerk" },
 ];
 
 function MarketView({ host }: { host: HostApi }) {
@@ -285,7 +219,7 @@ function MarketView({ host }: { host: HostApi }) {
       <MarketStyle />
       <div className="mk-hero">
         <h1>Marktplatz</h1>
-        <p>Standalone-Apps installieren, Subunit-Module öffnen und Agent-Skills entdecken.</p>
+        <p>Standalone-Apps installieren und Subunit-Module öffnen. <span style={{ opacity: 0.7 }}>Skills für U1 findest du im SNI.</span></p>
       </div>
 
       <div className="mk-tabs" role="tablist">
@@ -300,7 +234,6 @@ function MarketView({ host }: { host: HostApi }) {
       <div className="mk-grid">
         {tab === "programme" && STANDALONE.map((a) => <AppCard key={a.id} host={host} app={a} />)}
         {tab === "plugins" && MODULES.map((m) => <ModuleCard key={m.id} host={host} mod={m} />)}
-        {tab === "agenten" && SKILLS.map((s) => <SkillCard key={s.code} host={host} skill={s} />)}
       </div>
     </div>
   );
@@ -368,7 +301,7 @@ const plugin: PluginModule = {
     id: "marketplace",
     name: "Marktplatz",
     version: "1.1.0",
-    description: "Programme, Plugins & Agent-Skills.",
+    description: "Programme & Plugins — Apps und Module.",
     icon: ICON,
     permissions: ["apps", "notifications"],
     nav: { section: "core", order: 0 },

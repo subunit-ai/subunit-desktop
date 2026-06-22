@@ -1,11 +1,15 @@
 /**
- * agents.ts — the SNI agent registry (the "nervous system").
+ * agents.ts — the SNI registry (the "nervous system").
  *
- * Ported verbatim from the SNI source (subunit-ai/sni, src/data/agents.js):
- * U1 the orchestrator plus 11 specialist agents (S-01…S-11) across three tiers.
- * Each agent carries its live-ish status/cpu/mem, its AXONE (connections to
- * other agents) and its REFLEXE (automatic triggers). The Cortex view renders
- * this as a neural map; the agent codes in `axone` reference other agents' `code`.
+ * MODEL (per TJ): there is exactly ONE agent — U1 — and you add SKILLS to it.
+ * The former "specialist agents" S-01…S-11 are now U1's SKILLS, each carrying a
+ * status/load (cpu/mem), AXONE (connections to other skills) and REFLEXE
+ * (automatic triggers). The Cortex view renders U1 at the core with its skills
+ * around it; `axone` codes reference other skills' `code`.
+ *
+ * Internally each entry still uses the `Agent` shape (one orchestrator flag marks
+ * U1) so the existing neural-map math is reused — but everything user-facing says
+ * "Skill". `skillsOf()` returns the skills; `orchestratorOf()` returns U1.
  */
 
 export type Tier = "surface" | "core" | "deep";
@@ -29,9 +33,35 @@ export interface Agent {
   orchestrator?: boolean;
 }
 
-/** The one orchestrator agent (by flag, with a code fallback). */
+/** The one orchestrator agent (by flag, with a code fallback) — this is U1. */
 export const orchestratorOf = (agents: Agent[]): Agent | undefined =>
   agents.find((a) => a.orchestrator) ?? agents.find((a) => a.code === "U1");
+
+/** U1's SKILLS = every registry entry that is not the orchestrator. */
+export const skillsOf = (agents: Agent[]): Agent[] => agents.filter((a) => !a.orchestrator);
+
+/** A skill U1 can be given that isn't active yet — the skill marketplace. */
+export interface AvailableSkill {
+  code: string;
+  name: string;
+  emoji: string;
+  category: Tier;
+  desc: string;
+  abilities: string[];
+  price: string;
+  status: "ready" | "available" | "development" | "planned";
+}
+
+/** Skills U1 doesn't have yet (ported from the SNI marketplace catalogue). */
+export const AVAILABLE_SKILLS: AvailableSkill[] = [
+  { code: "SK-13", name: "Architect", emoji: "🏗️", category: "core", status: "ready", price: "349€/mo", desc: "Automatisches n8n-Workflow-Deployment, Axon-Builder, Infrastructure-as-Code.", abilities: ["n8n Auto-Deploy", "Axon-Builder", "Infrastructure-as-Code"] },
+  { code: "SK-12", name: "Memory", emoji: "🧠", category: "deep", status: "development", price: "249€/mo", desc: "Langzeit-Gedächtnis mit Embeddings, semantische Suche, ChromaDB — lernt aus jeder Interaktion.", abilities: ["Embedding-Speicher", "Semantische Suche", "Kontext-Recall"] },
+  { code: "SK-00", name: "Sentinel", emoji: "🛡️", category: "deep", status: "development", price: "199€/mo", desc: "Security-Überwachung, Kosten-Tracking, API-Nutzungsanalyse, Anomalie-Erkennung.", abilities: ["Threat-Detection", "API-Monitoring", "Kosten-Alerts"] },
+  { code: "SK-14", name: "Pulse", emoji: "⚡", category: "core", status: "planned", price: "199€/mo", desc: "LLM-Routing & Kosten-Optimierung — wählt automatisch das beste Modell je nach Task & Budget.", abilities: ["Multi-LLM-Router", "Auto-Modellwahl", "Budget-Limits"] },
+  { code: "SK-15", name: "Librarian", emoji: "📚", category: "surface", status: "planned", price: "149€/mo", desc: "Workspace-Organisation, automatische Archivierung, Dokumenten-Lifecycle.", abilities: ["Auto-Archivierung", "Tag-System", "Retention"] },
+  { code: "SK-16", name: "Sync", emoji: "🔄", category: "surface", status: "planned", price: "149€/mo", desc: "Automatische Datensynchronisation zwischen allen Axonen — CRM, Mail, Kalender, Wissen.", abilities: ["Bi-direktionaler Sync", "Conflict Resolution", "Delta-Updates"] },
+  { code: "SK-XX", name: "Custom Skill", emoji: "⚙️", category: "deep", status: "available", price: "Auf Anfrage", desc: "Maßgeschneiderter Skill nach deinen Anforderungen — wir bauen, was dein Business braucht.", abilities: ["Individuelles Design", "Custom-API", "SLA-Garantie"] },
+];
 
 /**
  * Tier presentation config — label + accent + ring radius. Data-driven so a 4th

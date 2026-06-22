@@ -26,6 +26,7 @@ import {
   type Tier,
 } from "./agents";
 import HomeTab from "./tabs/Home";
+import SkillsTab from "./tabs/Skills";
 
 const ICON = `<svg viewBox="0 0 24 24"><path d="M12 5a3 3 0 1 0-2.6-4.5"/><circle cx="12" cy="12" r="2.4"/><circle cx="5.5" cy="7.5" r="1.8"/><circle cx="18.5" cy="7.5" r="1.8"/><circle cx="6" cy="17" r="1.8"/><circle cx="18" cy="17" r="1.8"/><path d="M10 11 6.9 8.6M14 11l3.1-2.4M10.7 13.4 7.3 15.8M13.3 13.4l3.4 2.4M12 9.6V6"/></svg>`;
 
@@ -215,12 +216,13 @@ function CortexView({ host: _host }: { host: HostApi }) {
   const byCode = useMemo(() => new Map(AGENTS.map((a) => [a.code, a])), []);
   const selectedAgent = selected ? byCode.get(selected) : undefined;
 
-  // Aggregate HUD stats.
+  // Aggregate HUD stats (skills only — U1 is the one agent).
   const stats = useMemo(() => {
-    const running = AGENTS.filter((a) => a.status === "running").length;
+    const skills = AGENTS.filter((a) => !a.orchestrator);
+    const running = skills.filter((a) => a.status === "running").length;
     const cpu = AGENTS.reduce((s, a) => s + a.cpu, 0);
     const mem = AGENTS.reduce((s, a) => s + a.mem, 0);
-    return { running, total: AGENTS.length, cpu, mem };
+    return { running, total: skills.length, cpu, mem };
   }, []);
 
   // Stream the live synapse log.
@@ -249,7 +251,7 @@ function CortexView({ host: _host }: { host: HostApi }) {
 
       <div className="cx-head">
         <div className="cx-head-tx">
-          <p>Das Nervensystem — der Orchestrator koordiniert {AGENTS.length - 1} Spezial-Agenten über Axone &amp; Reflexe.</p>
+          <p>Das Nervensystem — U1 und seine {AGENTS.length - 1} Skills, verbunden über Axone &amp; Reflexe.</p>
         </div>
         <div className="cx-seg" role="tablist">
           <button className={mode === "axone" ? "on" : ""} onClick={() => setMode("axone")}>Axone</button>
@@ -258,7 +260,7 @@ function CortexView({ host: _host }: { host: HostApi }) {
       </div>
 
       <div className="cx-hud">
-        <Stat k="Agenten aktiv" v={`${stats.running}/${stats.total}`} sub="Live" />
+        <Stat k="Skills aktiv" v={`${stats.running}/${stats.total}`} sub="Live" />
         <Stat k="Σ CPU" v={`${stats.cpu}%`} />
         <Stat k="Σ RAM" v={`${(stats.mem / 1000).toFixed(2)} GB`} />
         <Stat k="Tiers" v="3" sub="Surface · Core · Deep" />
@@ -271,7 +273,7 @@ function CortexView({ host: _host }: { host: HostApi }) {
             viewBox={`0 0 ${W} ${H}`}
             preserveAspectRatio="xMidYMid meet"
             role="img"
-            aria-label="Agenten-Nervensystem: U1-Orchestrator im Kern, 11 Spezial-Agenten auf drei Ringen (Surface, Core, Deep), verbunden durch Axone, feuernde Reflexe."
+            aria-label="U1 im Kern mit seinen Skills auf drei Ringen (Surface, Core, Deep), verbunden durch Axone, feuernde Reflexe."
           >
             <defs>
               <radialGradient id="cx-well" cx="50%" cy="42%" r="75%">
@@ -508,7 +510,7 @@ function CortexStyle() {
 //  next build phases fill in — see SNI-PLAN.md.)
 // ════════════════════════════════════════════════════════════════════════════
 
-type TabId = "home" | "cortex" | "agents" | "network" | "reflexe" | "u1" | "security";
+type TabId = "home" | "cortex" | "skills" | "network" | "reflexe" | "u1" | "security";
 
 interface TabDef {
   id: TabId;
@@ -520,13 +522,10 @@ interface TabDef {
 const SNI_TABS: TabDef[] = [
   { id: "home", label: "Übersicht" },
   { id: "cortex", label: "Cortex" },
-  {
-    id: "agents", label: "Agenten",
-    soon: { phase: "Phase 1", lead: "Das Agenten-Register als Tier-Raster mit Live-Telemetrie.", bullets: ["Nach Tier gruppierte Karten (Surface · Core · Deep)", "Status-LED + CPU/RAM-Balken pro Agent", "Klick → Inspector (Rolle, Metriken, Logs, Axone, Reflexe)", "Start · Stop · Neustart pro Agent"] },
-  },
+  { id: "skills", label: "Skills" },
   {
     id: "network", label: "Netzwerk",
-    soon: { phase: "Phase 1", lead: "Axone & Reflexe als dokumentiertes Wirk-Netz.", bullets: ["Umschalter Axone (Workflows) ↔ Reflexe (Trigger)", "Detail-Modal: Workflow-Pipeline (n8n), Tech-Stack, verbundene Agenten", "Kategorie-Farbcode + Agenten-Filter", "Versionen & letzte Änderung"] },
+    soon: { phase: "Phase 1", lead: "Axone & Reflexe als dokumentiertes Wirk-Netz.", bullets: ["Umschalter Axone (Workflows) ↔ Reflexe (Trigger)", "Detail-Modal: Workflow-Pipeline (n8n), Tech-Stack, verbundene Skills", "Kategorie-Farbcode + Skill-Filter", "Versionen & letzte Änderung"] },
   },
   {
     id: "reflexe", label: "Reflexe",
@@ -601,6 +600,7 @@ function SNIShell({ host }: { host: HostApi }) {
       <div className="sni-body">
         {tab === "home" && <HomeTab name={name} />}
         {tab === "cortex" && <CortexView host={host} />}
+        {tab === "skills" && <SkillsTab host={host} />}
         {active.soon && <ComingTab def={active} />}
       </div>
     </div>
@@ -640,7 +640,7 @@ const plugin: PluginModule = {
     id: "sni",
     name: "SNI",
     version: "1.0.0",
-    description: "Subunit Neural Interface — das Agenten-Kontrollzentrum.",
+    description: "Subunit Neural Interface — U1 und seine Skills.",
     icon: ICON,
     permissions: ["storage"],
     nav: { section: "core", order: 1 },

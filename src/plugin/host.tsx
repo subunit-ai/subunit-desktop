@@ -537,6 +537,7 @@ export function makeHostApi(
 
     ui: {
       theme: () => ctrl.getTheme(),
+      setTheme: (t) => ctrl.setTheme(t),
       onTheme: (cb) => ctrl.onTheme(cb),
       openExternal: (url) => {
         void openExternal(url).catch(() => {});

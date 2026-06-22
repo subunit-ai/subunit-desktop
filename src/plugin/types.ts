@@ -304,6 +304,8 @@ export interface HostApps {
 export interface HostUi {
   /** Current theme. */
   theme(): "light" | "dark";
+  /** Set the app theme (persists + applies shell-wide). Ungated. */
+  setTheme(theme: "light" | "dark"): void;
   /** Subscribe to theme changes; returns an unsubscribe fn. */
   onTheme(cb: (theme: "light" | "dark") => void): () => void;
   /** Open an http(s) URL in the default browser (Rust `open_external`). */

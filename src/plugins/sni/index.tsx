@@ -31,6 +31,7 @@ import NetworkTab from "./tabs/Network";
 import ReflexeTab from "./tabs/Reflexe";
 import U1Tab from "./tabs/U1";
 import SecurityTab from "./tabs/Security";
+import Cortex3DTab from "./tabs/Cortex3D";
 
 const ICON = `<svg viewBox="0 0 24 24"><path d="M12 5a3 3 0 1 0-2.6-4.5"/><circle cx="12" cy="12" r="2.4"/><circle cx="5.5" cy="7.5" r="1.8"/><circle cx="18.5" cy="7.5" r="1.8"/><circle cx="6" cy="17" r="1.8"/><circle cx="18" cy="17" r="1.8"/><path d="M10 11 6.9 8.6M14 11l3.1-2.4M10.7 13.4 7.3 15.8M13.3 13.4l3.4 2.4M12 9.6V6"/></svg>`;
 
@@ -556,6 +557,40 @@ function ComingTab({ def }: { def: TabDef }) {
   );
 }
 
+/** The Cortex tab — a 3D engine (default) with the 2D map as a fallback view. */
+function CortexTab({ host }: { host: HostApi }) {
+  const [viz, setViz] = useState<"3d" | "2d">("3d");
+  useEffect(() => {
+    let on = true;
+    void host.storage.get("sni.cortexViz").then((v) => {
+      if (on && (v === "2d" || v === "3d")) setViz(v);
+    });
+    return () => { on = false; };
+  }, [host]);
+  const pick = (v: "3d" | "2d") => {
+    setViz(v);
+    void host.storage.set("sni.cortexViz", v);
+  };
+  return (
+    <div className="cxw">
+      <div className="cxw-bar">
+        <div className="cxw-seg" role="tablist">
+          <button className={viz === "3d" ? "on" : ""} onClick={() => pick("3d")}>3D</button>
+          <button className={viz === "2d" ? "on" : ""} onClick={() => pick("2d")}>2D</button>
+        </div>
+      </div>
+      {viz === "3d" ? (
+        // The 3D engine is position:absolute;inset:0 — give it a sized, relatively
+        // positioned box so its canvas + HUD stay HERE and never overlap the tab bar.
+        <div className="cxw-stage"><Cortex3DTab host={host} /></div>
+      ) : (
+        <CortexView host={host} />
+      )}
+      <style>{`.cxw-bar{display:flex;justify-content:flex-end;margin-bottom:10px}.cxw-seg{display:inline-flex;padding:3px;border-radius:11px;background:var(--glass2);border:1px solid var(--line);box-shadow:inset 0 1px 0 var(--rim)}.cxw-seg button{border:none;background:none;padding:5px 15px;border-radius:8px;font:inherit;font-size:12.5px;font-weight:650;color:var(--ink2);cursor:pointer;transition:.15s}.cxw-seg button.on{background:linear-gradient(160deg,#22d3ee,#06b6d4);color:#fff;box-shadow:0 5px 14px -6px rgba(6,182,212,.7)}.cxw-stage{position:relative;height:74vh;min-height:540px;border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow),inset 0 1px 0 rgba(150,200,240,.1)}`}</style>
+    </div>
+  );
+}
+
 function SNIShell({ host }: { host: HostApi }) {
   const [tab, setTab] = useState<TabId>("home");
   const [name, setName] = useState<string>("");
@@ -591,7 +626,7 @@ function SNIShell({ host }: { host: HostApi }) {
       </div>
       <div className="sni-body">
         {tab === "home" && <HomeTab name={name} />}
-        {tab === "cortex" && <CortexView host={host} />}
+        {tab === "cortex" && <CortexTab host={host} />}
         {tab === "skills" && <SkillsTab host={host} />}
         {tab === "network" && <NetworkTab host={host} />}
         {tab === "reflexe" && <ReflexeTab host={host} />}

@@ -27,6 +27,10 @@ import {
 } from "./agents";
 import HomeTab from "./tabs/Home";
 import SkillsTab from "./tabs/Skills";
+import NetworkTab from "./tabs/Network";
+import ReflexeTab from "./tabs/Reflexe";
+import U1Tab from "./tabs/U1";
+import SecurityTab from "./tabs/Security";
 
 const ICON = `<svg viewBox="0 0 24 24"><path d="M12 5a3 3 0 1 0-2.6-4.5"/><circle cx="12" cy="12" r="2.4"/><circle cx="5.5" cy="7.5" r="1.8"/><circle cx="18.5" cy="7.5" r="1.8"/><circle cx="6" cy="17" r="1.8"/><circle cx="18" cy="17" r="1.8"/><path d="M10 11 6.9 8.6M14 11l3.1-2.4M10.7 13.4 7.3 15.8M13.3 13.4l3.4 2.4M12 9.6V6"/></svg>`;
 
@@ -523,22 +527,10 @@ const SNI_TABS: TabDef[] = [
   { id: "home", label: "Übersicht" },
   { id: "cortex", label: "Cortex" },
   { id: "skills", label: "Skills" },
-  {
-    id: "network", label: "Netzwerk",
-    soon: { phase: "Phase 1", lead: "Axone & Reflexe als dokumentiertes Wirk-Netz.", bullets: ["Umschalter Axone (Workflows) ↔ Reflexe (Trigger)", "Detail-Modal: Workflow-Pipeline (n8n), Tech-Stack, verbundene Skills", "Kategorie-Farbcode + Skill-Filter", "Versionen & letzte Änderung"] },
-  },
-  {
-    id: "reflexe", label: "Reflexe",
-    soon: { phase: "Phase 2", lead: "Skripte & Workflows durchsuchbar verwalten.", bullets: ["Doppel-Tab: Reflexe (Skripte) ↔ Axone (Workflows)", "Volltext-Suche", "Berechtigungs-Badges: auto · fragen · sperren", "Aktiv/Inaktiv + Ausführungs-Zähler"] },
-  },
-  {
-    id: "u1", label: "U1",
-    soon: { phase: "Phase 2", lead: "Der Orchestrator-Raum — Steuerung, Kosten, Stimme.", bullets: ["24-Stunden-Timeline (96 Slots) mit Lupe", "Cron-Jobs + Modell-Wahl", "Kosten-Tracker (heute · Monat · Prognose)", "Text-Chat + Voice-Orb (8 Zustände, Live-Mic)"] },
-  },
-  {
-    id: "security", label: "Sicherheit",
-    soon: { phase: "Phase 2", lead: "Infrastruktur-Gesundheit + Finanz-Wächter.", bullets: ["Server-Donuts: CPU · RAM · Disk · Uptime", "Budget-Meter mit Soft/Hard-Limits", "Kosten-Chart (Verlauf + Prognose)", "Editierbare Limits + kritische Alerts"] },
-  },
+  { id: "network", label: "Netzwerk" },
+  { id: "reflexe", label: "Reflexe" },
+  { id: "u1", label: "U1" },
+  { id: "security", label: "Sicherheit" },
 ];
 
 /** Friendly display name from the signed-in email (mirrors the shell chip). */
@@ -601,6 +593,10 @@ function SNIShell({ host }: { host: HostApi }) {
         {tab === "home" && <HomeTab name={name} />}
         {tab === "cortex" && <CortexView host={host} />}
         {tab === "skills" && <SkillsTab host={host} />}
+        {tab === "network" && <NetworkTab host={host} />}
+        {tab === "reflexe" && <ReflexeTab host={host} />}
+        {tab === "u1" && <U1Tab host={host} />}
+        {tab === "security" && <SecurityTab host={host} />}
         {active.soon && <ComingTab def={active} />}
       </div>
     </div>

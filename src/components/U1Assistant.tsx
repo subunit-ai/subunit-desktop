@@ -193,6 +193,20 @@ export function U1Assistant({ pageName }: { pageName: string }) {
     [busy, ensureThread, pageName]
   );
 
+  // Plugins (e.g. E-Mail) can ask U1 with their own context via a window event:
+  //   window.dispatchEvent(new CustomEvent("u1:ask", { detail: { question } }))
+  useEffect(() => {
+    const onAsk = (e: Event) => {
+      const q = (e as CustomEvent<{ question?: string }>).detail?.question;
+      if (typeof q === "string" && q.trim()) {
+        setOpen(true);
+        void ask(q);
+      }
+    };
+    window.addEventListener("u1:ask", onAsk as EventListener);
+    return () => window.removeEventListener("u1:ask", onAsk as EventListener);
+  }, [ask]);
+
   const SUGGESTIONS = [
     `Was kann ich auf „${pageName}" tun?`,
     "Fasse den aktuellen Stand zusammen",

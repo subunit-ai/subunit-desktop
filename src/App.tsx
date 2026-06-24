@@ -24,6 +24,7 @@ import type { Account } from "./plugin/types";
 import { login, logout } from "./lib/auth";
 import { appVersion } from "./lib/ipc";
 import { SubunitMark } from "./components/SubunitMark";
+import { U1Assistant } from "./components/U1Assistant";
 
 // ════════════════════════════════════════════════════════════════════════
 // Bootstrap singletons (created once; App wires them into React state).
@@ -578,6 +579,9 @@ function Shell() {
         onClose={() => setPaletteOpen(false)}
         items={paletteItems}
       />
+
+      {/* Ubiquitous U1 helper — bottom-right on every page, knows the active page. */}
+      <U1Assistant pageName={activePlugin?.manifest.name ?? "Subunit"} />
     </div>
   );
 }

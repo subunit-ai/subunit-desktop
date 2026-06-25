@@ -4,26 +4,41 @@
  * A 3-pane mail client (folders · message list · reader) over u1@subunit.ai, with
  * U1 woven in: "Zusammenfassen" / "Antwort entwerfen" hand the message to the
  * ubiquitous U1 assistant (which already has system access). Incoming mail is
- * already ingested to u1 server-side (the S-03 Email-Ingest reflex); this is the
- * human-facing inbox on top.
+ * ingested to the Postfach store server-side (the S-03 Email-Ingest reflex →
+ * /api/email/inbound); this is the human-facing inbox on top.
  *
- * BACKEND (to wire once the email-api ships — IMAP read + SMTP send, Bearer-auth
- * like u1-chat, NOT behind Cloudflare Access):
- *   GET  /api/email/folders                       → Folder[]
- *   GET  /api/email/messages?folder=<id>          → MailSummary[]
- *   GET  /api/email/messages/:id                  → Mail (full body)
- *   POST /api/email/messages/:id/{read,star,archive,delete}
- *   POST /api/email/send  { to, subject, body }
- * Until then this runs on representative mock data so the UI is complete + demoable.
+ * BACKEND — LIVE (u1-chat email.ts, Bearer-auth like the assistant, NOT behind
+ * Cloudflare Access):
+ *   GET  /api/email/folders                       → { folders:[{id,count,unread?}] }
+ *   GET  /api/email/messages?folder=<id>          → { messages: Mail[] }
+ *   GET  /api/email/messages/:id                  → { message: Mail }   (marks read)
+ *   POST /api/email/messages/:id/{read,star,archive}
+ *   POST /api/email/send  { to, subject, body }   → sends via Resend, stores to 'sent'
+ *
+ * Folders mirror the server exactly (inbox · starred · sent · archive) — no
+ * phantom "drafts" the backend can't persist.
  *
  * Permissions: notifications. nav + ui + events are ungated.
  */
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { HostApi, PluginModule } from "../../plugin/types";
+import { getToken } from "../../lib/auth";
 
 const ICON = `<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>`;
+const CHAT = "https://chat.subunit.ai";
+
+/** Bearer-authed call against the Postfach API (same lane as the U1 assistant). */
+async function api(sub: string, opts: RequestInit = {}): Promise<any> {
+  const token = await getToken();
+  const res = await fetch(`${CHAT}/api/email${sub}`, {
+    ...opts,
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...(opts.headers || {}) },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
 
 const Svg = (p: { d: string }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
@@ -31,14 +46,13 @@ const Svg = (p: { d: string }) => (
   </svg>
 );
 
-type FolderId = "inbox" | "starred" | "sent" | "drafts" | "archive";
+type FolderId = "inbox" | "starred" | "sent" | "archive";
 
-interface Folder { id: FolderId; name: string; icon: string }
-const FOLDERS: Folder[] = [
+interface FolderDef { id: FolderId; name: string; icon: string }
+const FOLDERS: FolderDef[] = [
   { id: "inbox", name: "Posteingang", icon: "M3 5h18v14H3z|m3 7 9 6 9-6" },
   { id: "starred", name: "Wichtig", icon: "M12 3l2.9 6 6.6.5-5 4.3 1.6 6.4L12 17l-6.1 3.7 1.6-6.4-5-4.3 6.6-.5z" },
   { id: "sent", name: "Gesendet", icon: "M22 2 11 13|22 2l-7 20-4-9-9-4 20-7Z" },
-  { id: "drafts", name: "Entwürfe", icon: "M12 20h9|M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" },
   { id: "archive", name: "Archiv", icon: "M3 7h18v13H3z|M3 7l2-3h14l2 3|M9 12h6" },
 ];
 
@@ -55,44 +69,7 @@ interface Mail {
   unread: boolean;
   starred: boolean;
 }
-
-const MOCK: Mail[] = [
-  {
-    id: "m1", folder: "inbox", from: "anfrage@muellertech.de", fromName: "MüllerTech GmbH", to: "u1@subunit.ai",
-    subject: "Anfrage: KI-Automatisierung für unseren Vertrieb",
-    preview: "Guten Tag, wir sind auf Subunit aufmerksam geworden und würden gerne…",
-    body: "Guten Tag,\n\nwir sind über LinkedIn auf Subunit aufmerksam geworden und würden gerne besprechen, wie wir unseren Vertriebsprozess mit KI automatisieren können — Lead-Erfassung, Scoring und Follow-ups. Haben Sie nächste Woche Zeit für ein Erstgespräch?\n\nBeste Grüße\nThomas Müller\nGeschäftsführer, MüllerTech GmbH",
-    date: "09:42", unread: true, starred: true,
-  },
-  {
-    id: "m2", folder: "inbox", from: "monitor@subunit.ai", fromName: "Subunit Monitor", to: "u1@subunit.ai",
-    subject: "✓ Daily-Checkup: alle Systeme nominal",
-    preview: "CPU 34% · RAM 62% · Disk 41% · 12/12 Reflexe aktiv · GPU nominal",
-    body: "Daily-Checkup 06:00\n\nCPU 34% · RAM 62% · Disk 41%\nDocker: 18/18 Container up\nReflexe: 12/12 aktiv\nGPU: nominal (54°C)\nKosten heute: 0,70 €\n\nKeine Aktion erforderlich.",
-    date: "06:00", unread: true, starred: false,
-  },
-  {
-    id: "m3", folder: "inbox", from: "lena@acme.gmbh", fromName: "Lena Schuster (Acme)", to: "u1@subunit.ai",
-    subject: "Re: Q3-Plan & nächste Schritte",
-    preview: "Danke für die schnelle Antwort! Der Vorschlag passt — lass uns…",
-    body: "Hi,\n\ndanke für die schnelle Antwort! Der Vorschlag passt sehr gut. Lass uns am Donnerstag die Details durchgehen. Können wir den Knowledge-Stack auch direkt mit aufsetzen?\n\nViele Grüße\nLena",
-    date: "Gestern", unread: false, starred: false,
-  },
-  {
-    id: "m4", folder: "inbox", from: "team@hackernews.digest", fromName: "AI-News-Digest", to: "u1@subunit.ai",
-    subject: "Dein täglicher KI-Digest (5 Stories)",
-    preview: "Die wichtigsten KI-Themen heute, kuratiert aus HackerNews…",
-    body: "Dein KI-Digest — 5 Stories\n\n1. Neues Open-Weight-Modell schlägt GPT-4 in Benchmarks\n2. Agenten-Frameworks im Vergleich\n3. RAG vs. lange Kontexte — was gewinnt?\n…\n\n(generiert vom Research-Skill via reddit-digest)",
-    date: "07:30", unread: false, starred: false,
-  },
-  {
-    id: "s1", folder: "sent", from: "u1@subunit.ai", fromName: "Unit One", to: "lena@acme.gmbh",
-    subject: "Re: Q3-Plan & nächste Schritte",
-    preview: "Hallo Lena, gerne! Anbei der überarbeitete Q3-Plan…",
-    body: "Hallo Lena,\n\ngerne! Anbei der überarbeitete Q3-Plan mit den besprochenen Anpassungen. Der Knowledge-Stack lässt sich direkt mit aufsetzen — ich habe das Paket mit eingeplant.\n\nBeste Grüße\nUnit One · Subunit",
-    date: "Gestern", unread: false, starred: false,
-  },
-];
+interface FolderCount { count: number; unread?: number }
 
 function initials(name: string): string {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("") || "?";
@@ -109,28 +86,80 @@ function askU1(question: string) {
 }
 
 function EmailView({ host }: { host: HostApi }) {
-  const [mails, setMails] = useState<Mail[]>(MOCK);
   const [folder, setFolder] = useState<FolderId>("inbox");
-  const [selId, setSelId] = useState<string | null>("m1");
+  const [list, setList] = useState<Mail[]>([]);
+  const [counts, setCounts] = useState<Record<string, FolderCount>>({});
+  const [sel, setSel] = useState<Mail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
   const [composing, setComposing] = useState(false);
+  const [reply, setReply] = useState<Mail | null>(null);
 
-  const list = useMemo(() => {
-    if (folder === "starred") return mails.filter((m) => m.starred);
-    return mails.filter((m) => m.folder === folder);
-  }, [mails, folder]);
+  const loadFolders = useCallback(async () => {
+    try {
+      const r = await api("/folders");
+      const c: Record<string, FolderCount> = {};
+      for (const f of r.folders ?? []) c[f.id] = { count: f.count, unread: f.unread };
+      setCounts(c);
+    } catch {
+      /* counts are cosmetic — silent */
+    }
+  }, []);
 
-  const sel = mails.find((m) => m.id === selId && (folder === "starred" ? m.starred : m.folder === folder)) ?? null;
-  const unreadInbox = mails.filter((m) => m.folder === "inbox" && m.unread).length;
+  const loadList = useCallback(async (f: FolderId) => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const r = await api(`/messages?folder=${f}`);
+      setList(r.messages ?? []);
+    } catch {
+      setErr("Postfach nicht erreichbar");
+      setList([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  const open = (id: string) => {
-    setSelId(id);
-    setMails((ms) => ms.map((m) => (m.id === id ? { ...m, unread: false } : m)));
+  useEffect(() => { loadFolders(); }, [loadFolders]);
+  useEffect(() => { setSel(null); loadList(folder); }, [folder, loadList]);
+
+  const unreadInbox = counts.inbox?.unread ?? 0;
+
+  const open = async (id: string) => {
+    setList((ms) => ms.map((m) => (m.id === id ? { ...m, unread: false } : m)));
+    try {
+      const r = await api(`/messages/${id}`);
+      setSel(r.message);
+      loadFolders();
+    } catch {
+      const fallback = list.find((m) => m.id === id) ?? null;
+      setSel(fallback);
+    }
   };
-  const toggleStar = (id: string) =>
-    setMails((ms) => ms.map((m) => (m.id === id ? { ...m, starred: !m.starred } : m)));
-  const archive = (id: string) => {
-    setMails((ms) => ms.map((m) => (m.id === id ? { ...m, folder: "archive" } : m)));
-    setSelId(null);
+
+  const toggleStar = async (m: Mail) => {
+    const next = !m.starred;
+    setSel((s) => (s && s.id === m.id ? { ...s, starred: next } : s));
+    setList((ms) => ms.map((x) => (x.id === m.id ? { ...x, starred: next } : x)));
+    try { await api(`/messages/${m.id}/star`, { method: "POST" }); } catch { /* keep optimistic */ }
+    loadFolders();
+    if (folder === "starred") loadList("starred");
+  };
+
+  const archive = async (m: Mail) => {
+    try { await api(`/messages/${m.id}/archive`, { method: "POST" }); } catch { /* */ }
+    setSel(null);
+    loadList(folder);
+    loadFolders();
+  };
+
+  const startCompose = (r: Mail | null) => { setReply(r); setComposing(true); };
+  const afterSent = (to: string) => {
+    setComposing(false);
+    setReply(null);
+    host.notifications.notify("E-Mail gesendet", to);
+    if (folder === "sent") loadList("sent");
+    loadFolders();
   };
 
   return (
@@ -139,11 +168,11 @@ function EmailView({ host }: { host: HostApi }) {
       <div className="em-grid">
         {/* folders */}
         <nav className="em-folders">
-          <button className="btn btn-primary minibtn em-compose" onClick={() => setComposing(true)}>
+          <button className="btn btn-primary minibtn em-compose" onClick={() => startCompose(null)}>
             <Svg d="M12 5v14M5 12h14" /> Verfassen
           </button>
           {FOLDERS.map((f) => (
-            <button key={f.id} className={`em-fold${folder === f.id ? " on" : ""}`} onClick={() => { setFolder(f.id); setSelId(null); }}>
+            <button key={f.id} className={`em-fold${folder === f.id ? " on" : ""}`} onClick={() => setFolder(f.id)}>
               <span className="em-fold-ic"><Svg d={f.icon} /></span>
               <span className="em-fold-n">{f.name}</span>
               {f.id === "inbox" && unreadInbox > 0 && <span className="em-fold-c">{unreadInbox}</span>}
@@ -154,13 +183,25 @@ function EmailView({ host }: { host: HostApi }) {
 
         {/* list */}
         <div className="em-list">
-          <div className="em-list-h">{FOLDERS.find((f) => f.id === folder)?.name}<span>{list.length}</span></div>
+          <div className="em-list-h">
+            {FOLDERS.find((f) => f.id === folder)?.name}
+            <span className="em-list-h-r">
+              <button className="em-refresh" title="Aktualisieren" onClick={() => { loadList(folder); loadFolders(); }}>
+                <Svg d="M21 12a9 9 0 1 1-2.6-6.4|M21 4v5h-5" />
+              </button>
+              {list.length}
+            </span>
+          </div>
           <div className="em-list-scroll">
-            {list.length === 0 ? (
+            {loading ? (
+              <div className="em-empty">Lädt…</div>
+            ) : err ? (
+              <div className="em-empty">{err}<br /><button className="btn-ghost minibtn" style={{ marginTop: 10 }} onClick={() => loadList(folder)}>Erneut</button></div>
+            ) : list.length === 0 ? (
               <div className="em-empty">Keine Nachrichten</div>
             ) : (
               list.map((m) => (
-                <button key={m.id} className={`em-row${m.id === selId ? " on" : ""}${m.unread ? " unread" : ""}`} onClick={() => open(m.id)}>
+                <button key={m.id} className={`em-row${m.id === sel?.id ? " on" : ""}${m.unread ? " unread" : ""}`} onClick={() => open(m.id)}>
                   <span className="em-av" style={{ background: avatarColor(m.fromName) }}>{initials(m.fromName)}</span>
                   <span className="em-row-tx">
                     <span className="em-row-top"><b>{folder === "sent" ? m.to : m.fromName}</b><span className="em-row-date">{m.date}</span></span>
@@ -193,8 +234,8 @@ function EmailView({ host }: { host: HostApi }) {
                     <span>{sel.from} · an {sel.to} · {sel.date}</span>
                   </div>
                   <div className="em-read-tools">
-                    <button className="em-tool" title="Wichtig" onClick={() => toggleStar(sel.id)} data-on={sel.starred}><Svg d="M12 3l2.9 6 6.6.5-5 4.3 1.6 6.4L12 17l-6.1 3.7 1.6-6.4-5-4.3 6.6-.5z" /></button>
-                    <button className="em-tool" title="Archivieren" onClick={() => archive(sel.id)}><Svg d="M3 7h18v13H3z|M3 7l2-3h14l2 3|M9 12h6" /></button>
+                    <button className="em-tool" title="Wichtig" onClick={() => toggleStar(sel)} data-on={sel.starred}><Svg d="M12 3l2.9 6 6.6.5-5 4.3 1.6 6.4L12 17l-6.1 3.7 1.6-6.4-5-4.3 6.6-.5z" /></button>
+                    <button className="em-tool" title="Archivieren" onClick={() => archive(sel)}><Svg d="M3 7h18v13H3z|M3 7l2-3h14l2 3|M9 12h6" /></button>
                   </div>
                 </div>
               </div>
@@ -214,35 +255,55 @@ function EmailView({ host }: { host: HostApi }) {
               <div className="em-body">{sel.body}</div>
 
               <div className="em-read-foot">
-                <button className="btn btn-primary minibtn" onClick={() => setComposing(true)}><Svg d="M9 17l-5-5 5-5|M4 12h11a4 4 0 0 1 4 4v2" /> Antworten</button>
-                <button className="btn-ghost minibtn" onClick={() => setComposing(true)}>Weiterleiten</button>
+                <button className="btn btn-primary minibtn" onClick={() => startCompose(sel)}><Svg d="M9 17l-5-5 5-5|M4 12h11a4 4 0 0 1 4 4v2" /> Antworten</button>
+                <button className="btn-ghost minibtn" onClick={() => startCompose(sel)}>Weiterleiten</button>
               </div>
             </>
           )}
         </div>
       </div>
 
-      {composing && <Compose onClose={() => setComposing(false)} onSent={(to) => { setComposing(false); host.notifications.notify("E-Mail gesendet", to); }} prefill={sel} />}
+      {composing && <Compose onClose={() => { setComposing(false); setReply(null); }} onSent={afterSent} prefill={reply} />}
     </div>
   );
 }
 
 function Compose({ onClose, onSent, prefill }: { onClose: () => void; onSent: (to: string) => void; prefill: Mail | null }) {
-  const [to, setTo] = useState(prefill && prefill.folder !== "sent" ? prefill.from : "");
+  const replyTo = prefill && prefill.folder !== "sent" ? prefill.from : "";
+  const [to, setTo] = useState(replyTo);
   const [subject, setSubject] = useState(prefill ? `Re: ${prefill.subject.replace(/^Re:\s*/i, "")}` : "");
-  const [bodyTxt, setBodyTxt] = useState("");
+  const [bodyTxt, setBodyTxt] = useState(
+    prefill ? `\n\n— — —\nAm ${prefill.date} schrieb ${prefill.fromName} <${prefill.from}>:\n${prefill.body.split("\n").map((l) => "> " + l).join("\n")}` : "",
+  );
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const send = async () => {
+    if (!to.trim()) return;
+    setSending(true);
+    setError(null);
+    try {
+      await api("/send", { method: "POST", body: JSON.stringify({ to: to.trim(), subject, body: bodyTxt }) });
+      onSent(to.trim());
+    } catch {
+      setError("Senden fehlgeschlagen — erneut versuchen?");
+      setSending(false);
+    }
+  };
+
   return (
-    <div className="em-scrim" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="em-scrim" onClick={(e) => { if (e.target === e.currentTarget && !sending) onClose(); }}>
       <div className="em-comp" role="dialog" aria-label="Verfassen">
-        <div className="em-comp-h">Neue E-Mail<button className="em-x" onClick={onClose}><svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12" /></svg></button></div>
+        <div className="em-comp-h">Neue E-Mail<button className="em-x" onClick={onClose} disabled={sending}><svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12" /></svg></button></div>
         <input className="fld em-comp-f" placeholder="An…" value={to} onChange={(e) => setTo(e.target.value)} />
         <input className="fld em-comp-f" placeholder="Betreff" value={subject} onChange={(e) => setSubject(e.target.value)} />
         <textarea className="fld em-comp-ta" placeholder="Nachricht…" value={bodyTxt} onChange={(e) => setBodyTxt(e.target.value)} />
+        {error && <div className="em-comp-err">{error}</div>}
         <div className="em-comp-foot">
-          <button className="em-u1" onClick={() => askU1(`Schreibe eine professionelle E-Mail an ${to || "den Empfänger"}${subject ? ` zum Thema „${subject}"` : ""}. Kurz, freundlich, im Namen von Subunit.`)}><span className="em-u1-sp">✦</span> Mit U1 schreiben</button>
+          <button className="em-u1" onClick={() => askU1(`Schreibe eine professionelle E-Mail an ${to || "den Empfänger"}${subject ? ` zum Thema „${subject}"` : ""}. Kurz, freundlich, im Namen von Subunit. Gib mir nur den Text.`)}><span className="em-u1-sp">✦</span> Mit U1 schreiben</button>
           <div style={{ flex: 1 }} />
-          <button className="btn-ghost minibtn" onClick={onClose}>Verwerfen</button>
-          <button className="btn btn-primary minibtn" disabled={!to.trim()} onClick={() => onSent(to)}>Senden</button>
+          <button className="btn-ghost minibtn" onClick={onClose} disabled={sending}>Verwerfen</button>
+          <button className="btn btn-primary minibtn" disabled={!to.trim() || sending} onClick={send}>{sending ? "Sendet…" : "Senden"}</button>
         </div>
       </div>
     </div>
@@ -269,10 +330,12 @@ function EmailStyle() {
 .em-acct-dot{width:7px;height:7px;border-radius:50%;background:#34d399}
 
 .em-list{display:flex;flex-direction:column;border-radius:var(--r-sm);background:var(--glass);backdrop-filter:blur(28px) saturate(1.6);-webkit-backdrop-filter:blur(28px) saturate(1.6);border:1px solid var(--glass-edge);box-shadow:var(--shadow),inset 0 1px 0 var(--rim);overflow:hidden}
-.em-list-h{flex:none;display:flex;justify-content:space-between;padding:14px 15px;font-size:13px;font-weight:680;border-bottom:1px solid var(--line)}
-.em-list-h span{color:var(--ink3);font-weight:600}
+.em-list-h{flex:none;display:flex;justify-content:space-between;align-items:center;padding:14px 15px;font-size:13px;font-weight:680;border-bottom:1px solid var(--line)}
+.em-list-h-r{display:flex;align-items:center;gap:8px;color:var(--ink3);font-weight:600}
+.em-refresh{width:26px;height:26px;border-radius:8px;border:1px solid var(--line);background:var(--glass2);color:var(--ink2);cursor:pointer;display:grid;place-items:center}
+.em-refresh:hover{color:var(--ink);border-color:var(--line2)}.em-refresh svg{width:14px;height:14px}
 .em-list-scroll{flex:1;overflow-y:auto;padding:6px}
-.em-empty{text-align:center;color:var(--ink3);font-size:12.5px;padding:30px}
+.em-empty{text-align:center;color:var(--ink3);font-size:12.5px;padding:30px;line-height:1.5}
 .em-row{display:flex;gap:10px;width:100%;text-align:left;padding:10px 10px;border:none;background:none;border-radius:11px;cursor:pointer;position:relative}
 .em-row:hover{background:var(--fill-weak)}
 .em-row.on{background:rgba(6,182,212,.09)}
@@ -319,8 +382,10 @@ function EmailStyle() {
 .em-comp-h{display:flex;align-items:center;justify-content:space-between;font-size:15px;font-weight:650;margin-bottom:14px}
 .em-x{width:30px;height:30px;border-radius:9px;border:none;background:none;cursor:pointer;color:var(--ink3);display:grid;place-items:center}
 .em-x:hover{background:var(--fill-weak);color:var(--ink)}.em-x svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
+.em-x:disabled{opacity:.4;cursor:default}
 .em-comp-f{margin-bottom:9px}
 .em-comp-ta{min-height:180px;resize:vertical;line-height:1.55;font-size:14px;margin-bottom:12px}
+.em-comp-err{font-size:12px;color:#f87171;margin:-4px 0 10px;font-weight:600}
 .em-comp-foot{display:flex;align-items:center;gap:8px}
 @media (prefers-reduced-motion:reduce){.em-scrim,.em-comp{animation:none}}
 `}</style>
@@ -334,7 +399,7 @@ const plugin: PluginModule = {
   manifest: {
     id: "email",
     name: "E-Mail",
-    version: "1.0.0",
+    version: "1.1.0",
     description: "Postfach — Mails lesen, verwalten, mit U1 bearbeiten.",
     icon: ICON,
     permissions: ["notifications"],

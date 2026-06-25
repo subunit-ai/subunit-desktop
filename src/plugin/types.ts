@@ -186,9 +186,18 @@ export interface TerminalSpawnOpts {
   taskId?: string;
 }
 
+/** A project directory the cockpit can open a terminal in. */
+export interface ProjectInfo {
+  name: string;
+  path: string;
+  git: boolean;
+}
+
 export interface HostTerminals {
   spawn(opts: TerminalSpawnOpts): Promise<string /* id */>;
   list(): Promise<TermInfo[]>;
+  /** Project dirs (~/subunit, ~/Documents…) to spawn a terminal in (cockpit). */
+  projects(): Promise<ProjectInfo[]>;
   write(id: string, data: string): Promise<void>;
   kill(id: string): Promise<void>;
   /** Subscribe to output chunks for one pty; returns an unsubscribe fn. */

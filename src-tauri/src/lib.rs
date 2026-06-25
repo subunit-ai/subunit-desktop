@@ -86,6 +86,8 @@ pub fn run() {
             terminal::kill_terminal,
             // External plugin discovery (terminal.rs).
             terminal::list_plugins,
+            // Project discovery for the cockpit (terminal.rs).
+            terminal::list_projects,
             // Marketplace: standalone app detect/open/install (apps.rs).
             apps::app_status,
             apps::app_latest,

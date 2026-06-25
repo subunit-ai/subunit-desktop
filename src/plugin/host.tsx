@@ -354,6 +354,10 @@ export function makeHostApi(
         gate("terminals", "terminals.list");
         return ctrl.listTerminals();
       },
+      projects: () => {
+        gate("terminals", "terminals.projects");
+        return isTauri() ? invoke("list_projects") : Promise.resolve([]);
+      },
       write: (tid, data) => {
         gate("terminals", "terminals.write");
         return ctrl.writeTerminal(tid, data);

@@ -464,6 +464,58 @@ struct ExitPayload {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// Project discovery — directories the cockpit can open a terminal in.
+// ════════════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectInfo {
+    pub name: String,
+    pub path: String,
+    pub git: bool,
+}
+
+/// List project directories under the user's project roots (~/subunit, ~/Documents),
+/// newest-first by mtime, git repos preferred. Used by the cockpit to spawn a
+/// terminal in a chosen project (so terminals group by project).
+#[tauri::command]
+pub fn list_projects() -> Vec<ProjectInfo> {
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return Vec::new(),
+    };
+    let roots = [home.join("subunit"), home.join("Documents"), home.join("Developer")];
+    let mut out: Vec<(std::time::SystemTime, ProjectInfo)> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for root in roots {
+        let entries = match std::fs::read_dir(&root) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = match path.file_name().map(|n| n.to_string_lossy().into_owned()) {
+                Some(n) if !n.starts_with('.') && !n.starts_with('_') && n != "node_modules" => n,
+                _ => continue,
+            };
+            let abs = path.to_string_lossy().into_owned();
+            if !seen.insert(abs.clone()) {
+                continue;
+            }
+            let git = path.join(".git").exists();
+            let mtime = entry.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+            out.push((mtime, ProjectInfo { name, path: abs, git }));
+        }
+    }
+    // git repos first, then newest mtime.
+    out.sort_by(|a, b| b.1.git.cmp(&a.1.git).then(b.0.cmp(&a.0)));
+    out.into_iter().map(|(_, p)| p).take(60).collect()
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // External plugin discovery
 // ════════════════════════════════════════════════════════════════════════════
 

@@ -28,6 +28,7 @@ import type {
   HostApi,
   NotionTask,
   PluginModule,
+  ProjectInfo,
   TermInfo,
 } from "../../plugin/types";
 
@@ -337,19 +338,24 @@ function useTerminalStatus(host: HostApi, terms: TermInfo[]) {
 function TerminalsPanel({
   host,
   terms,
+  projects,
   refreshing,
   activeId,
   onOpen,
+  onNew,
   onRefresh,
 }: {
   host: HostApi;
   terms: TermInfo[];
+  projects: ProjectInfo[];
   refreshing: boolean;
   activeId: string | null;
   onOpen: (t: TermInfo) => void;
+  onNew: (p: ProjectInfo) => void;
   onRefresh: () => void;
 }) {
   const { status, previews, waiting } = useTerminalStatus(host, terms);
+  const [pickOpen, setPickOpen] = useState(false);
 
   // Group terminals by project (working dir basename).
   const groups = useMemo(() => {
@@ -379,6 +385,24 @@ function TerminalsPanel({
           {terms.length > 0 && (
             <button className="ck-u1" onClick={overview} title="U1: Überblick über alle Terminals">✦ U1</button>
           )}
+          <div className="ck-pick-wrap">
+            <button className="ck-new" onClick={() => setPickOpen((o) => !o)} title="Terminal in Projekt starten">＋ Terminal</button>
+            {pickOpen && (
+              <div className="ck-pick" onMouseLeave={() => setPickOpen(false)}>
+                <div className="ck-pick-h">Projekt wählen</div>
+                {projects.length === 0 ? (
+                  <div className="ck-pick-empty">Keine Projekte gefunden</div>
+                ) : (
+                  projects.map((p) => (
+                    <button key={p.path} className="ck-pick-i" onClick={() => { setPickOpen(false); onNew(p); }}>
+                      <span className="ck-pick-n">{p.name}</span>
+                      {p.git && <span className="ck-pick-git">git</span>}
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
           <button className="iconbtn dash-mini" onClick={onRefresh} title="Refresh">
             <span className={`ic ${refreshing ? "dash-spin" : ""}`}><Svg d={ICONS.refresh} /></span>
           </button>
@@ -389,7 +413,7 @@ function TerminalsPanel({
         <div className="dash-panel-empty">
           <span className="ic"><Svg d={ICONS.terminal} /></span>
           <b>Keine laufenden Terminals</b>
-          <span>Starte eine Aufgabe mit „Lokal ausführen“ — sie erscheint hier live, mit Status &amp; Ping wenn sie auf dich wartet.</span>
+          <span>Starte oben mit „＋ Terminal“ eines in einem Projekt (oder per „Lokal ausführen“) — es erscheint hier live, gruppiert nach Projekt, mit Status &amp; Ping wenn es auf dich wartet.</span>
         </div>
       ) : (
         <div className="ck-groups">
@@ -439,6 +463,16 @@ function CockpitStyle() {
 .ck-attn{margin-left:9px;font-size:10.5px;font-weight:700;letter-spacing:.03em;color:#b7791f;background:rgba(251,191,36,.14);border:1px solid rgba(251,191,36,.3);padding:2px 8px;border-radius:999px;animation:ck-attn 1.8s ease-in-out infinite}
 @keyframes ck-attn{0%,100%{opacity:1}50%{opacity:.55}}
 .ck-head-act{display:flex;align-items:center;gap:6px}
+.ck-pick-wrap{position:relative}
+.ck-new{font:inherit;font-size:11.5px;font-weight:650;padding:5px 11px;border-radius:999px;border:1px solid var(--line);background:var(--glass2);color:var(--ink);cursor:pointer;white-space:nowrap;transition:.15s}
+.ck-new:hover{border-color:rgba(6,182,212,.4);color:var(--cyan-d,#0891b2)}
+.ck-pick{position:absolute;top:calc(100% + 6px);right:0;z-index:30;width:230px;max-height:320px;overflow-y:auto;padding:6px;border-radius:var(--r-sm);border:1px solid var(--glass-edge2,var(--glass-edge));background:var(--menu-bg,var(--glass));backdrop-filter:blur(34px) saturate(1.7);-webkit-backdrop-filter:blur(34px) saturate(1.7);box-shadow:var(--shadow),inset 0 1px 0 var(--rim)}
+.ck-pick-h{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);padding:7px 9px 6px}
+.ck-pick-empty{font-size:12px;color:var(--ink3);padding:8px 9px}
+.ck-pick-i{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;text-align:left;padding:8px 9px;border:none;background:none;border-radius:9px;cursor:pointer;font:inherit;font-size:12.5px;color:var(--ink)}
+.ck-pick-i:hover{background:var(--fill-weak)}
+.ck-pick-n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ck-pick-git{flex:none;font-size:9px;font-weight:700;text-transform:uppercase;color:var(--cyan-d,#0891b2);background:rgba(6,182,212,.1);border:1px solid rgba(6,182,212,.22);border-radius:5px;padding:1px 5px}
 .ck-u1{display:inline-flex;align-items:center;gap:5px;font:inherit;font-size:11.5px;font-weight:650;padding:5px 11px;border-radius:999px;border:1px solid rgba(6,182,212,.3);background:rgba(6,182,212,.08);color:var(--cyan-d,#0891b2);cursor:pointer;transition:.15s;white-space:nowrap}
 .ck-u1:hover{background:rgba(6,182,212,.15);border-color:rgba(6,182,212,.5)}
 .ck-u1.sm{padding:0;width:24px;height:24px;justify-content:center;flex:none}
@@ -618,6 +652,28 @@ function DashboardView({ host }: { host: HostApi }) {
     }
   }, [host]);
 
+  // Projects the cockpit can open a terminal in.
+  const [projects, setProjects] = useState<ProjectInfo[]>([]);
+  useEffect(() => {
+    host.terminals.projects().then(setProjects).catch(() => setProjects([]));
+  }, [host]);
+
+  // Open an interactive shell in a project → it shows in the cockpit, grouped.
+  const newTerminal = useCallback(
+    async (proj: ProjectInfo) => {
+      try {
+        const id = await host.terminals.spawn({ cmd: "zsh", cwd: proj.path, title: proj.name });
+        host.notifications.notify("Terminal gestartet", proj.name);
+        await loadTerms();
+        const list = await host.terminals.list();
+        setActiveTerm(list.find((t) => t.id === id) ?? null);
+      } catch (e) {
+        host.notifications.notify("Fehler", e instanceof Error ? e.message : String(e));
+      }
+    },
+    [host, loadTerms]
+  );
+
   // Load the LOCAL answer models (the downloaded ollama ones) for "Lokal ausführen".
   useEffect(() => {
     let cancelled = false;
@@ -782,9 +838,11 @@ function DashboardView({ host }: { host: HostApi }) {
             <TerminalsPanel
               host={host}
               terms={terms}
+              projects={projects}
               refreshing={termsRefreshing}
               activeId={activeTermId}
               onOpen={openTerm}
+              onNew={newTerminal}
               onRefresh={loadTerms}
             />
           )}

@@ -127,6 +127,8 @@ export interface TermInfo {
   taskId?: string;
   /** Whether the pty is still alive (false once the exit event fired). */
   running: boolean;
+  /** Project label — the working dir's basename (cockpit grouping); "" if none. */
+  project?: string;
 }
 
 /** A Notion task surfaced to ops plugins via the host. */

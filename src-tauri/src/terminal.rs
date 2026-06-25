@@ -47,6 +47,8 @@ pub struct TermInfo {
     pub running: bool,
     /// Epoch milliseconds when the pty was spawned.
     pub started_at: u64,
+    /// Project label — the working dir's basename (for the cockpit's grouping).
+    pub project: String,
 }
 
 /// Spawn options from the frontend (`spawn_terminal({ opts })`). camelCase to
@@ -283,6 +285,14 @@ pub fn spawn_terminal(app: AppHandle, opts: SpawnOpts) -> Result<String, String>
         .unwrap_or_else(|| display_title(&cmd));
     let running = Arc::new(AtomicBool::new(true));
 
+    // Project = the working dir's basename, so the cockpit can group terminals.
+    let project = opts
+        .cwd
+        .as_deref()
+        .filter(|c| !c.is_empty())
+        .and_then(|c| std::path::Path::new(c).file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_default();
+
     let info = TermInfo {
         id: id.clone(),
         title,
@@ -290,6 +300,7 @@ pub fn spawn_terminal(app: AppHandle, opts: SpawnOpts) -> Result<String, String>
         task_id: opts.task_id.clone(),
         running: true,
         started_at: now_ms(),
+        project,
     };
 
     // Reader thread: drain the PTY, forward chunks, emit exit on EOF.

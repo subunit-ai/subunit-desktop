@@ -266,6 +266,74 @@ function TerminalPane({
 // ════════════════════════════════════════════════════════════════════════════
 // Terminals panel (right column) — live list of ptys.
 // ════════════════════════════════════════════════════════════════════════════
+// ── Cockpit: per-terminal status + attention + U1 orchestration ──────────────
+type TStatus = "working" | "waiting" | "idle" | "done";
+const STAT: Record<TStatus, { label: string; cls: string }> = {
+  working: { label: "Arbeitet", cls: "work" },
+  waiting: { label: "Wartet auf dich", cls: "wait" },
+  idle: { label: "Bereit", cls: "idle" },
+  done: { label: "Fertig", cls: "done" },
+};
+
+/** Hand a question to the ubiquitous U1 assistant (it opens + answers). */
+function askU1(question: string) {
+  window.dispatchEvent(new CustomEvent("u1:ask", { detail: { question } }));
+}
+
+/**
+ * Watch every terminal: derive status from output timing (working when output
+ * flows, "wartet auf dich" when a still-running pty goes quiet ≥10s — i.e. Claude
+ * finished its turn and needs you) and NOTIFY once on that transition.
+ */
+function useTerminalStatus(host: HostApi, terms: TermInfo[]) {
+  const lastOut = useRef<Record<string, number>>({});
+  const notified = useRef<Set<string>>(new Set());
+  const [status, setStatus] = useState<Record<string, TStatus>>({});
+  const [previews, setPreviews] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const offs = terms.map((t) =>
+      host.terminals.onOutput(t.id, (chunk) => {
+        lastOut.current[t.id] = Date.now();
+        notified.current.delete(t.id); // fresh output → it's working again
+        const tail = chunk.split("\n").map((l) => l.trim()).filter(Boolean).pop();
+        if (tail) setPreviews((p) => ({ ...p, [t.id]: tail.replace(/\s+/g, " ").slice(0, 140) }));
+      })
+    );
+    return () => offs.forEach((o) => o());
+  }, [host, terms]);
+
+  useEffect(() => {
+    const tick = () => {
+      const now = Date.now();
+      const next: Record<string, TStatus> = {};
+      for (const t of terms) {
+        if (!t.running) {
+          next[t.id] = "done";
+          continue;
+        }
+        const seen = lastOut.current[t.id];
+        if (seen == null) next[t.id] = "idle";
+        else {
+          const idle = now - seen;
+          next[t.id] = idle < 4000 ? "working" : idle >= 10000 ? "waiting" : "idle";
+        }
+        if (next[t.id] === "waiting" && !notified.current.has(t.id)) {
+          notified.current.add(t.id);
+          host.notifications.notify("⏳ Wartet auf dich", `${t.title}${t.project ? ` · ${t.project}` : ""}`);
+        }
+      }
+      setStatus(next);
+    };
+    tick();
+    const iv = window.setInterval(tick, 2500);
+    return () => window.clearInterval(iv);
+  }, [host, terms]);
+
+  const waiting = terms.filter((t) => status[t.id] === "waiting");
+  return { status, previews, waiting };
+}
+
 function TerminalsPanel({
   host,
   terms,
@@ -281,71 +349,115 @@ function TerminalsPanel({
   onOpen: (t: TermInfo) => void;
   onRefresh: () => void;
 }) {
-  // Tiny live preview of the latest output line per terminal.
-  const [previews, setPreviews] = useState<Record<string, string>>({});
-  useEffect(() => {
-    const offs = terms.map((t) =>
-      host.terminals.onOutput(t.id, (chunk) => {
-        const tail = chunk.split("\n").filter(Boolean).pop();
-        if (tail)
-          setPreviews((p) => ({ ...p, [t.id]: tail.replace(/\s+/g, " ").trim() }));
-      })
-    );
-    return () => offs.forEach((o) => o());
-  }, [host, terms]);
+  const { status, previews, waiting } = useTerminalStatus(host, terms);
+
+  // Group terminals by project (working dir basename).
+  const groups = useMemo(() => {
+    const m = new Map<string, TermInfo[]>();
+    for (const t of terms) {
+      const p = t.project || "Allgemein";
+      const arr = m.get(p) ?? [];
+      arr.push(t);
+      m.set(p, arr);
+    }
+    return [...m.entries()];
+  }, [terms]);
+
+  const overview = () => {
+    const lines = terms.map((t) => `• ${t.title}${t.project ? ` (${t.project})` : ""} — ${STAT[status[t.id] ?? "idle"].label}`).join("\n");
+    askU1(`Das sind meine ${terms.length} offenen Terminals${waiting.length ? `, ${waiting.length} warten auf mich` : ""}:\n${lines}\n\nGib mir einen kurzen Überblick + was ich als Nächstes tun sollte.`);
+  };
 
   return (
     <aside className="dash-panel">
+      <CockpitStyle />
       <div className="dash-panel-head">
         <div className="sect" style={{ margin: 0 }}>
-          Aktive Terminals
+          Cockpit{waiting.length > 0 && <span className="ck-attn">{waiting.length} wartet</span>}
         </div>
-        <button
-          className="iconbtn dash-mini"
-          onClick={onRefresh}
-          title="Refresh"
-        >
-          <span className={`ic ${refreshing ? "dash-spin" : ""}`}>
-            <Svg d={ICONS.refresh} />
-          </span>
-        </button>
+        <div className="ck-head-act">
+          {terms.length > 0 && (
+            <button className="ck-u1" onClick={overview} title="U1: Überblick über alle Terminals">✦ U1</button>
+          )}
+          <button className="iconbtn dash-mini" onClick={onRefresh} title="Refresh">
+            <span className={`ic ${refreshing ? "dash-spin" : ""}`}><Svg d={ICONS.refresh} /></span>
+          </button>
+        </div>
       </div>
 
       {terms.length === 0 ? (
         <div className="dash-panel-empty">
-          <span className="ic">
-            <Svg d={ICONS.terminal} />
-          </span>
+          <span className="ic"><Svg d={ICONS.terminal} /></span>
           <b>Keine laufenden Terminals</b>
-          <span>
-            Starte eine Aufgabe mit „Lokal ausführen“ — sie erscheint hier live.
-          </span>
+          <span>Starte eine Aufgabe mit „Lokal ausführen“ — sie erscheint hier live, mit Status &amp; Ping wenn sie auf dich wartet.</span>
         </div>
       ) : (
-        <ul className="list dash-termlist">
-          {terms.map((t) => (
-            <li
-              key={t.id}
-              className={`dash-termrow${t.id === activeId ? " is-active" : ""}`}
-              onClick={() => onOpen(t)}
-            >
-              <span className={`dash-dot ${t.running ? "on" : "off"}`} />
-              <div className="dash-termrow-tx">
-                <div className="dash-termrow-title">{t.title}</div>
-                <div className="dash-termrow-prev">
-                  {previews[t.id] ||
-                    (t.taskId ? "linked task" : t.cmd) ||
-                    "—"}
-                </div>
-              </div>
-              <span className={`pill ${t.running ? "live" : "gone"}`}>
-                {t.running ? "Live" : "Done"}
-              </span>
-            </li>
+        <div className="ck-groups">
+          {groups.map(([proj, ts]) => (
+            <div key={proj} className="ck-group">
+              <div className="ck-group-h"><span className="ck-group-n">{proj}</span><span className="ck-group-c">{ts.length}</span></div>
+              <ul className="list dash-termlist">
+                {ts.map((t) => {
+                  const st = status[t.id] ?? "idle";
+                  return (
+                    <li
+                      key={t.id}
+                      className={`dash-termrow ck-row ${STAT[st].cls}${t.id === activeId ? " is-active" : ""}`}
+                      onClick={() => onOpen(t)}
+                    >
+                      <span className={`ck-dot ${STAT[st].cls}`} />
+                      <div className="dash-termrow-tx">
+                        <div className="dash-termrow-title">{t.title}</div>
+                        <div className="dash-termrow-prev">{previews[t.id] || (t.taskId ? "verknüpfte Aufgabe" : t.cmd) || "—"}</div>
+                      </div>
+                      <div className="ck-row-r">
+                        <span className={`pill ck-pill ${STAT[st].cls}`}>{STAT[st].label}</span>
+                        <button
+                          className="ck-u1 sm"
+                          title="U1 zu diesem Terminal fragen"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            askU1(`Mein Terminal „${t.title}"${t.project ? ` (Projekt ${t.project})` : ""} ist gerade „${STAT[st].label}". Letzte Ausgabe: ${previews[t.id] || "—"}. Was ist hier los und was soll ich tun?`);
+                          }}
+                        >✦</button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
           ))}
-        </ul>
+        </div>
       )}
     </aside>
+  );
+}
+
+function CockpitStyle() {
+  return (
+    <style>{`
+.ck-attn{margin-left:9px;font-size:10.5px;font-weight:700;letter-spacing:.03em;color:#b7791f;background:rgba(251,191,36,.14);border:1px solid rgba(251,191,36,.3);padding:2px 8px;border-radius:999px;animation:ck-attn 1.8s ease-in-out infinite}
+@keyframes ck-attn{0%,100%{opacity:1}50%{opacity:.55}}
+.ck-head-act{display:flex;align-items:center;gap:6px}
+.ck-u1{display:inline-flex;align-items:center;gap:5px;font:inherit;font-size:11.5px;font-weight:650;padding:5px 11px;border-radius:999px;border:1px solid rgba(6,182,212,.3);background:rgba(6,182,212,.08);color:var(--cyan-d,#0891b2);cursor:pointer;transition:.15s;white-space:nowrap}
+.ck-u1:hover{background:rgba(6,182,212,.15);border-color:rgba(6,182,212,.5)}
+.ck-u1.sm{padding:0;width:24px;height:24px;justify-content:center;flex:none}
+.ck-groups{display:flex;flex-direction:column;gap:14px;margin-top:6px;overflow-y:auto}
+.ck-group-h{display:flex;align-items:center;justify-content:space-between;padding:2px 4px 7px;font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--ink3)}
+.ck-group-c{font-weight:600}
+.ck-dot{flex:none;width:9px;height:9px;border-radius:50%;background:var(--ink3)}
+.ck-dot.work{background:#34d399;box-shadow:0 0 0 0 rgba(52,211,153,.5);animation:ck-beat 1.6s ease-out infinite}
+.ck-dot.wait{background:#fbbf24;box-shadow:0 0 0 0 rgba(251,191,36,.6);animation:ck-beat 1.1s ease-out infinite}
+.ck-dot.idle{background:#94a3b8}.ck-dot.done{background:var(--ink3);opacity:.6}
+@keyframes ck-beat{0%{box-shadow:0 0 0 0 currentColor}70%{box-shadow:0 0 0 6px transparent}100%{box-shadow:0 0 0 0 transparent}}
+.ck-row.wait{background:rgba(251,191,36,.07);border:1px solid rgba(251,191,36,.28)}
+.ck-row-r{display:flex;align-items:center;gap:6px;flex:none}
+.ck-pill.work{color:#0a9d63;background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.25)}
+.ck-pill.wait{color:#b7791f;background:rgba(251,191,36,.14);border:1px solid rgba(251,191,36,.3)}
+.ck-pill.idle{color:var(--ink2);background:var(--glass2);border:1px solid var(--line)}
+.ck-pill.done{color:var(--ink3);background:var(--glass2);border:1px solid var(--line)}
+@media (prefers-reduced-motion:reduce){.ck-attn,.ck-dot.work,.ck-dot.wait{animation:none}}
+`}</style>
   );
 }
 

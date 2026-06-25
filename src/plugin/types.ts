@@ -56,6 +56,7 @@ export type Permission =
   | "updater" // updater.version / check / install / onAvailable (app self-update)
   | "apps" // marketplace: detect/open/install standalone Subunit apps
   | "ingest" // synapse.ingest → the real n8n axon-ingest webhooks
+  | "files" // ui.openPath / ui.revealPath — open or reveal a local source file
   | (string & {}); // forward-compatible: unknown permissions are simply ungranted
 
 /**
@@ -337,6 +338,17 @@ export interface HostUi {
   onTheme(cb: (theme: "light" | "dark") => void): () => void;
   /** Open an http(s) URL in the default browser (Rust `open_external`). */
   openExternal(url: string): void;
+  /**
+   * Open a LOCAL file with the user's default app (e.g. a cited document's raw
+   * original). Gated by the "files" permission. Rust confines the path to the
+   * user's home dir, requires it to exist, and refuses executable types.
+   */
+  openPath(path: string): void;
+  /**
+   * Reveal a LOCAL file in Finder (select it in its folder). Gated by "files".
+   * Same home-confinement as openPath; never executes the target.
+   */
+  revealPath(path: string): void;
   /**
    * The host-provided React + ReactDOM client, so plugins render with the
    * shell's single instance instead of bundling a second copy.

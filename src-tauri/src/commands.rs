@@ -122,6 +122,93 @@ pub fn open_external(url: String) {
     }
 }
 
+// ---- Local source files (Atlas: open / reveal a cited document) ----
+
+/// Canonicalize `input` and require it to be an absolute path that EXISTS and
+/// lives under the user's home directory. Returns the canonical path or None.
+///
+/// canonicalize() resolves `..` and symlinks AND requires existence, so a crafted
+/// path cannot escape the home dir via a link or traversal. Confining to $HOME is
+/// where the DSGVO-local Atlas raw store lives (…/subunit/atlas/.devdata/raw/…),
+/// and keeps the shell from being driven to touch arbitrary system locations.
+fn safe_home_path(input: &str) -> Option<std::path::PathBuf> {
+    if input.is_empty() {
+        return None;
+    }
+    let p = std::path::Path::new(input);
+    if !p.is_absolute() {
+        return None;
+    }
+    let canon = std::fs::canonicalize(p).ok()?;
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from)?;
+    let home = std::fs::canonicalize(&home).unwrap_or(home);
+    if !canon.starts_with(&home) {
+        return None;
+    }
+    Some(canon)
+}
+
+/// Reveal a local file in Finder (selects it in its enclosing folder). The path
+/// must be an existing absolute path under the user's home dir. Reveal never
+/// executes the target — it only opens Finder at that location — so it is the
+/// safe primary action for "show me where this came from".
+#[tauri::command]
+pub fn reveal_path(path: String) {
+    let Some(p) = safe_home_path(&path) else {
+        log::warn!("reveal_path: refusing path outside home / nonexistent");
+        return;
+    };
+    // .spawn() (not .status()): hand off to LaunchServices without blocking the
+    // event-loop thread on `open`'s exit. The spawn Err is the only thing we use.
+    if let Err(e) = std::process::Command::new("/usr/bin/open")
+        .arg("-R")
+        .arg(&p)
+        .spawn()
+    {
+        log::warn!("reveal_path failed: {e}");
+    }
+}
+
+/// Open a local file with the user's default app (Preview for a PDF, etc.). Same
+/// home-confinement as `reveal_path`, PLUS an ALLOWLIST of viewable source-document
+/// types. Anything else is refused — executables/bundles, internet-location files
+/// (.webloc/.url that dispatch arbitrary URL handlers), and local markup (.html/.svg
+/// that runs JS in a file:// origin) — so a crafted cited path can never drive-by
+/// execute code or invoke a handler. Directories and extensionless files are refused.
+#[tauri::command]
+pub fn open_path(path: String) {
+    let Some(p) = safe_home_path(&path) else {
+        log::warn!("open_path: refusing path outside home / nonexistent");
+        return;
+    };
+    if p.is_dir() {
+        log::warn!("open_path: refusing directory");
+        return;
+    }
+    // Viewable document / image / audio-video source types only.
+    const ALLOW: &[&str] = &[
+        "pdf", "txt", "text", "md", "markdown", "rst", "rtf", "log",
+        "csv", "tsv", "json", "yaml", "yml",
+        "doc", "docx", "odt", "pages", "ppt", "pptx", "key", "xls", "xlsx", "numbers", "epub",
+        "png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "tiff", "tif", "bmp",
+        "mp3", "m4a", "wav", "aac", "flac", "ogg", "mp4", "m4v", "mov",
+    ];
+    let ext = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+    match ext.as_deref() {
+        Some(e) if ALLOW.contains(&e) => {}
+        _ => {
+            log::warn!("open_path: refusing non-viewable type {ext:?}");
+            return;
+        }
+    }
+    if let Err(e) = std::process::Command::new("/usr/bin/open").arg(&p).spawn() {
+        log::warn!("open_path failed: {e}");
+    }
+}
+
 // ---- Updater ----
 
 /// Check for an update; returns the available version or "" if up to date.

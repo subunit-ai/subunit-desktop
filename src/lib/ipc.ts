@@ -41,6 +41,14 @@ export const logout = (): Promise<void> => invoke("logout");
 export const openExternal = (url: string): Promise<void> =>
   invoke("open_external", { url });
 
+/** Open a local file with the default app (Rust validates: under $HOME, exists, non-executable). */
+export const openPath = (path: string): Promise<void> =>
+  invoke("open_path", { path });
+
+/** Reveal a local file in Finder (Rust validates: under $HOME, exists). */
+export const revealPath = (path: string): Promise<void> =>
+  invoke("reveal_path", { path });
+
 /** Check for an update; resolves to the new version or "" if up to date. */
 export const checkForUpdates = (): Promise<string> => invoke("check_for_updates");
 

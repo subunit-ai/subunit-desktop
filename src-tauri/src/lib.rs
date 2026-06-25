@@ -77,6 +77,8 @@ pub fn run() {
             commands::login,
             commands::logout,
             commands::open_external,
+            commands::open_path,
+            commands::reveal_path,
             commands::check_for_updates,
             commands::install_update,
             // Local PTY terminals (terminal.rs).

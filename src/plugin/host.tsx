@@ -46,6 +46,8 @@ import {
   onUpdateProgress,
   openApp,
   openExternal,
+  openPath,
+  revealPath,
   synapseIngest,
 } from "../lib/ipc";
 import { BACKENDS, BACKEND_BASE_URL } from "../lib/config";
@@ -558,6 +560,14 @@ export function makeHostApi(
       onTheme: (cb) => ctrl.onTheme(cb),
       openExternal: (url) => {
         void openExternal(url).catch(() => {});
+      },
+      openPath: (path) => {
+        gate("files", "ui.openPath");
+        void openPath(path).catch(() => {});
+      },
+      revealPath: (path) => {
+        gate("files", "ui.revealPath");
+        void revealPath(path).catch(() => {});
       },
       react: reactSurface,
     },

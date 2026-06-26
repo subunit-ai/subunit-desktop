@@ -194,11 +194,52 @@ export interface ProjectInfo {
   git: boolean;
 }
 
+/** An open todo Claude tracked in a session (best-effort). */
+export interface SessionTodo {
+  content: string;
+  /** "pending" | "in_progress" (completed ones are filtered out server-side). */
+  status: string;
+}
+
+/**
+ * A Claude Code session discovered on disk (read-only) — including ones running in
+ * EXTERNAL terminals. The cockpit reads `~/.claude/projects/**.jsonl`, never a TTY.
+ */
+export interface ClaudeSession {
+  /** Session id (the transcript stem). */
+  id: string;
+  /** Decoded working directory. */
+  projectPath: string;
+  /** Working-dir basename — the cockpit grouping label. */
+  projectName: string;
+  /** Claude's generated title (or the last prompt as a fallback). */
+  title: string;
+  /** Most recent user prompt — "what it's working on". */
+  lastPrompt: string;
+  /** Latest assistant reply text (a short progress signal; may be ""). */
+  summary: string;
+  /** "working" | "waiting" | "idle" | "done". */
+  status: string;
+  /** A running `claude` process currently holds this transcript open. */
+  live: boolean;
+  /** Last activity (transcript mtime), epoch ms. */
+  lastActivity: number;
+  /** Whether the session's working directory still exists. */
+  cwdExists: boolean;
+  /** Latest open todos (best-effort; often empty). */
+  todos: SessionTodo[];
+}
+
 export interface HostTerminals {
   spawn(opts: TerminalSpawnOpts): Promise<string /* id */>;
   list(): Promise<TermInfo[]>;
   /** Project dirs (~/subunit, ~/Documents…) to spawn a terminal in (cockpit). */
   projects(): Promise<ProjectInfo[]>;
+  /**
+   * Read-only discovery of all Claude Code sessions on the Mac (external terminals
+   * included), newest activity first. Empty in non-Tauri/browser mode.
+   */
+  sessions(): Promise<ClaudeSession[]>;
   write(id: string, data: string): Promise<void>;
   kill(id: string): Promise<void>;
   /** Subscribe to output chunks for one pty; returns an unsubscribe fn. */

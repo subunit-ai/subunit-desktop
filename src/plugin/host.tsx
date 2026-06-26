@@ -360,6 +360,10 @@ export function makeHostApi(
         gate("terminals", "terminals.projects");
         return isTauri() ? invoke("list_projects") : Promise.resolve([]);
       },
+      sessions: () => {
+        gate("terminals", "terminals.sessions");
+        return isTauri() ? invoke("list_claude_sessions") : Promise.resolve([]);
+      },
       write: (tid, data) => {
         gate("terminals", "terminals.write");
         return ctrl.writeTerminal(tid, data);

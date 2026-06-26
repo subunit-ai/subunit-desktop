@@ -11,6 +11,7 @@ mod ingest; // synapse → real n8n axon-ingest webhooks
 mod commands;
 mod config;
 mod http; // shared pooled HTTP client for the cloud auth path
+mod sessions; // read-only discovery of Claude Code sessions (the cockpit)
 mod terminal; // local PTY terminals + external plugin discovery
 
 /// Tauri event names the terminal reader thread emits (kept in sync with
@@ -90,6 +91,8 @@ pub fn run() {
             terminal::list_plugins,
             // Project discovery for the cockpit (terminal.rs).
             terminal::list_projects,
+            // Read-only Claude Code session discovery for the cockpit (sessions.rs).
+            sessions::list_claude_sessions,
             // Marketplace: standalone app detect/open/install (apps.rs).
             apps::app_status,
             apps::app_latest,

@@ -25,6 +25,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type {
+  ClaudeSession,
   HostApi,
   NotionTask,
   PluginModule,
@@ -321,7 +322,7 @@ function useTerminalStatus(host: HostApi, terms: TermInfo[]) {
         }
         if (next[t.id] === "waiting" && !notified.current.has(t.id)) {
           notified.current.add(t.id);
-          host.notifications.notify("⏳ Wartet auf dich", `${t.title}${t.project ? ` · ${t.project}` : ""}`);
+          host.notifications.notify("Wartet auf dich", `${t.title}${t.project ? ` · ${t.project}` : ""}`);
         }
       }
       setStatus(next);
@@ -496,6 +497,270 @@ function CockpitStyle() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// Arbeitsplatz — every Claude Code session on the Mac (external terminals incl.)
+// ════════════════════════════════════════════════════════════════════════════
+/** Relative time, German, compact. */
+function relTime(ms: number): string {
+  const d = Date.now() - ms;
+  if (d < 45000) return "gerade eben";
+  const m = Math.floor(d / 60000);
+  if (m < 60) return `vor ${m} Min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `vor ${h} Std`;
+  const days = Math.floor(h / 24);
+  return `vor ${days} ${days === 1 ? "Tag" : "Tagen"}`;
+}
+
+/** Notify once when a LIVE session goes working → waiting (Claude needs you). */
+function useSessionAttention(host: HostApi, sessions: ClaudeSession[]) {
+  const prev = useRef<Record<string, string>>({});
+  useEffect(() => {
+    for (const s of sessions) {
+      const was = prev.current[s.id];
+      // Fired the instant a session stops producing output (Claude finished its
+      // turn → your move). working → waiting is exactly that moment.
+      if (s.status === "waiting" && was === "working") {
+        host.notifications.notify("Claude wartet auf dich", `${s.title} · ${s.projectName}`);
+      }
+      prev.current[s.id] = s.status;
+    }
+  }, [host, sessions]);
+}
+
+function SessionCard({
+  s,
+  onResume,
+}: {
+  s: ClaudeSession;
+  onResume: (s: ClaudeSession) => void;
+}) {
+  const [showTodos, setShowTodos] = useState(false);
+  const st = STAT[(s.status as TStatus)] ?? STAT.idle;
+  return (
+    <div className={`sb-card ${st.cls}`}>
+      <div className="sb-card-top">
+        <span className={`ck-dot ${st.cls}`} />
+        <div className="sb-card-tx">
+          <div className="sb-card-title">
+            {s.title}
+            {s.live && <span className="sb-live">live</span>}
+          </div>
+          <div className="sb-card-prompt">{s.lastPrompt || s.summary || "—"}</div>
+        </div>
+        <span className={`pill ck-pill ${st.cls}`}>{st.label}</span>
+      </div>
+
+      <div className="sb-card-meta">
+        <span className="sb-when">{relTime(s.lastActivity)}</span>
+        {!s.cwdExists && <span className="sb-warn">Ordner fehlt</span>}
+        {s.todos.length > 0 && (
+          <button className="sb-todos-c" onClick={() => setShowTodos((v) => !v)}>
+            {s.todos.length} offen{showTodos ? " ▾" : " ▸"}
+          </button>
+        )}
+      </div>
+
+      {showTodos && s.todos.length > 0 && (
+        <ul className="sb-todos">
+          {s.todos.slice(0, 6).map((t, i) => (
+            <li key={i} className={t.status === "in_progress" ? "doing" : ""}>
+              <span className="sb-todo-dot" />
+              {t.content}
+            </li>
+          ))}
+          {s.todos.length > 6 && <li className="sb-todo-more">+ {s.todos.length - 6} weitere</li>}
+        </ul>
+      )}
+
+      <div className="sb-card-act">
+        <button
+          className="ck-u1 sm"
+          title="U1 zu dieser Session fragen"
+          onClick={() =>
+            askU1(
+              `Meine Claude-Session „${s.title}" im Projekt ${s.projectName} ist „${st.label}". Sie arbeitet an: ${s.lastPrompt || s.summary || "—"}.${s.todos.length ? ` Offene Punkte: ${s.todos.map((t) => t.content).join("; ")}.` : ""} Gib mir einen kurzen Überblick + was ich als Nächstes tun sollte.`
+            )
+          }
+        >
+          ✦
+        </button>
+        <button className="sb-resume" title="Session in einem Terminal hier fortsetzen" onClick={() => onResume(s)}>
+          Fortsetzen
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SessionsBoard({
+  host,
+  sessions,
+  refreshing,
+  onResume,
+  onRefresh,
+}: {
+  host: HostApi;
+  sessions: ClaudeSession[];
+  refreshing: boolean;
+  onResume: (s: ClaudeSession) => void;
+  onRefresh: () => void;
+}) {
+  useSessionAttention(host, sessions);
+  const [showDone, setShowDone] = useState(false);
+
+  const working = sessions.filter((s) => s.status === "working").length;
+  const waiting = sessions.filter((s) => s.status === "waiting").length;
+  const doneCount = sessions.filter((s) => s.status === "done").length;
+
+  // Default to the live workspace (hide long-finished sessions behind a toggle).
+  const shown = useMemo(
+    () => (showDone ? sessions : sessions.filter((s) => s.status !== "done")),
+    [sessions, showDone]
+  );
+
+  // Group by project, projects ordered by their most-recent session.
+  const groups = useMemo(() => {
+    const m = new Map<string, ClaudeSession[]>();
+    for (const s of shown) {
+      const arr = m.get(s.projectName) ?? [];
+      arr.push(s);
+      m.set(s.projectName, arr);
+    }
+    return [...m.entries()].sort(
+      (a, b) =>
+        Math.max(...b[1].map((s) => s.lastActivity)) - Math.max(...a[1].map((s) => s.lastActivity))
+    );
+  }, [shown]);
+
+  const overview = () => {
+    const lines = sessions
+      .slice(0, 24)
+      .map((s) => `• [${(STAT[(s.status as TStatus)] ?? STAT.idle).label}] ${s.title} (${s.projectName}) — ${s.lastPrompt || s.summary || "—"}`)
+      .join("\n");
+    askU1(
+      `Das ist mein Arbeitsplatz: ${sessions.length} Claude-Sessions${waiting ? `, ${waiting} warten auf mich` : ""}${working ? `, ${working} arbeiten gerade` : ""}.\n${lines}\n\nVerschaff mir einen Überblick: Wo stehe ich, was wartet auf mich, was sollte ich als Nächstes anpacken?`
+    );
+  };
+
+  return (
+    <section className="sb">
+      <SessStyle />
+      <div className="sb-head">
+        <div className="sb-head-tx">
+          <div className="sb-title">
+            Arbeitsplatz
+            {waiting > 0 && <span className="ck-attn">{waiting} wartet auf dich</span>}
+          </div>
+          <div className="sb-sub">
+            Alle Claude-Code-Sessions auf dem Mac — live, nach Projekt sortiert. {working} aktiv · {sessions.length} gesamt
+          </div>
+        </div>
+        <div className="sb-head-r">
+          {sessions.length > 0 && (
+            <button className="ck-u1" onClick={overview} title="U1: Überblick über alle Sessions">
+              ✦ U1 Überblick
+            </button>
+          )}
+          <button className="iconbtn dash-mini" onClick={onRefresh} title="Aktualisieren">
+            <span className={`ic ${refreshing ? "dash-spin" : ""}`}>
+              <Svg d={ICONS.refresh} />
+            </span>
+          </button>
+        </div>
+      </div>
+
+      {shown.length === 0 ? (
+        <div className="sb-empty">
+          <span className="ic"><Svg d={ICONS.terminal} /></span>
+          <b>{sessions.length === 0 ? "Keine aktiven Claude-Sessions gefunden" : "Alles abgearbeitet"}</b>
+          <span>
+            {sessions.length === 0 ? (
+              <>
+                Sobald du irgendwo auf dem Mac ein Terminal mit <code>claude</code> offen hast,
+                erscheint es hier — mit Projekt, Status, woran es arbeitet und offenen Aufgaben.
+              </>
+            ) : (
+              <>Aktuell arbeitet oder wartet keine Session. {doneCount} ältere sind ausgeblendet.</>
+            )}
+          </span>
+        </div>
+      ) : (
+        <div className="sb-groups">
+          {groups.map(([proj, ss]) => (
+            <div key={proj} className="sb-group">
+              <div className="sb-group-h">
+                <span className="sb-group-n">{proj}</span>
+                <span className="sb-group-c">{ss.length}</span>
+              </div>
+              <div className="sb-cards">
+                {ss.map((s) => (
+                  <SessionCard key={s.id} s={s} onResume={onResume} />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {doneCount > 0 && (
+        <button className="sb-more" onClick={() => setShowDone((v) => !v)}>
+          {showDone ? "Ältere ausblenden" : `+ ${doneCount} ältere Session${doneCount === 1 ? "" : "s"} anzeigen`}
+        </button>
+      )}
+    </section>
+  );
+}
+
+function SessStyle() {
+  return (
+    <style>{`
+.sb{margin:0 2px 22px}
+.sb-head{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin-bottom:14px}
+.sb-title{font-size:18px;font-weight:650;letter-spacing:-.02em;display:flex;align-items:center}
+.sb-sub{font-size:12.5px;color:var(--ink3);margin-top:4px}
+.sb-head-r{display:flex;align-items:center;gap:7px;flex:none}
+.sb-groups{display:flex;flex-direction:column;gap:16px}
+.sb-group-h{display:flex;align-items:center;gap:8px;padding:0 2px 9px;font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink3)}
+.sb-group-n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb-group-c{font-weight:600;color:var(--ink3);background:var(--glass2);border:1px solid var(--line);border-radius:999px;padding:0 8px;font-size:10.5px}
+.sb-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.sb-card{display:flex;flex-direction:column;gap:9px;padding:14px 15px;border-radius:var(--r-sm);background:var(--glass);backdrop-filter:blur(30px) saturate(1.6);-webkit-backdrop-filter:blur(30px) saturate(1.6);border:1px solid var(--glass-edge);box-shadow:var(--shadow-sm),inset 0 1px 0 var(--rim);transition:transform .18s cubic-bezier(.2,.8,.2,1),border-color .18s}
+.sb-card:hover{transform:translateY(-1px);border-color:var(--line2)}
+.sb-card.work{border-color:rgba(16,185,129,.3)}
+.sb-card.wait{border-color:rgba(251,191,36,.34);background:rgba(251,191,36,.05)}
+.sb-card-top{display:flex;align-items:flex-start;gap:10px}
+.sb-card-tx{flex:1;min-width:0}
+.sb-card-title{font-size:14px;font-weight:650;letter-spacing:-.01em;display:flex;align-items:center;gap:7px;line-height:1.3}
+.sb-live{flex:none;font-size:9px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#0a9d63;background:rgba(16,185,129,.13);border:1px solid rgba(16,185,129,.3);border-radius:5px;padding:1px 5px}
+.sb-card-prompt{font-size:12px;color:var(--ink2);margin-top:4px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.sb-card .ck-dot{margin-top:4px}
+.sb-card .ck-pill{flex:none;align-self:flex-start}
+.sb-card-meta{display:flex;align-items:center;gap:9px;font-size:11px;color:var(--ink3)}
+.sb-when{font-variant-numeric:tabular-nums}
+.sb-warn{color:#b7791f;font-weight:600}
+.sb-todos-c{font:inherit;font-size:11px;font-weight:650;color:var(--cyan-d,#0891b2);background:none;border:none;cursor:pointer;padding:0}
+.sb-todos{list-style:none;margin:0;padding:8px 0 2px;display:flex;flex-direction:column;gap:5px;border-top:1px solid var(--line)}
+.sb-todos li{display:flex;align-items:flex-start;gap:7px;font-size:11.5px;color:var(--ink2);line-height:1.4}
+.sb-todo-dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--ink3);margin-top:5px}
+.sb-todos li.doing{color:var(--ink);font-weight:600}
+.sb-todos li.doing .sb-todo-dot{background:#fbbf24}
+.sb-todo-more{color:var(--ink3);font-size:10.5px}
+.sb-card-act{display:flex;align-items:center;gap:7px;margin-top:auto;padding-top:2px}
+.sb-resume{flex:1;font:inherit;font-size:12px;font-weight:600;padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:var(--glass2);color:var(--ink);cursor:pointer;transition:.15s}
+.sb-resume:hover{border-color:rgba(6,182,212,.45);color:var(--cyan-d,#0891b2);background:rgba(6,182,212,.07)}
+.sb-empty{text-align:center;padding:34px 18px;color:var(--ink2);border-radius:var(--r-sm);background:var(--glass);border:1px solid var(--glass-edge)}
+.sb-empty .ic{width:46px;height:46px;border-radius:14px;display:grid;place-items:center;margin:0 auto 13px;background:linear-gradient(160deg,rgba(6,182,212,.16),rgba(6,182,212,.04));color:var(--cyan-d)}
+.sb-empty .ic svg{width:22px;height:22px}
+.sb-empty b{display:block;font-size:15px;font-weight:600;color:var(--ink);margin-bottom:6px}
+.sb-empty span{font-size:12.5px;line-height:1.55;display:block;max-width:46ch;margin:0 auto}
+.sb-empty code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;background:var(--glass2);padding:1px 5px;border-radius:5px}
+.sb-more{display:block;margin:14px auto 0;font:inherit;font-size:12px;font-weight:600;color:var(--ink3);background:none;border:none;cursor:pointer;padding:6px 12px;border-radius:999px}
+.sb-more:hover{color:var(--cyan-d,#0891b2);background:var(--fill-weak)}
+`}</style>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // Task list (main column)
 // ════════════════════════════════════════════════════════════════════════════
 function TaskList({
@@ -617,6 +882,10 @@ function DashboardView({ host }: { host: HostApi }) {
   const [activeTerm, setActiveTerm] = useState<TermInfo | null>(null);
   const [runningTaskIds, setRunningTaskIds] = useState<Set<string>>(new Set());
 
+  // The Arbeitsplatz: every Claude Code session on the Mac (external incl.).
+  const [sessions, setSessions] = useState<ClaudeSession[]>([]);
+  const [sessionsRefreshing, setSessionsRefreshing] = useState(false);
+
   // Local answer models (the downloaded ollama ones) used by "Lokal ausführen".
   const [runModels, setRunModels] = useState<{ id: string; label: string }[]>([]);
   const [runModel, setRunModel] = useState<string>("");
@@ -651,6 +920,50 @@ function DashboardView({ host }: { host: HostApi }) {
       setTermsRefreshing(false);
     }
   }, [host]);
+
+  // ── Claude sessions (the Arbeitsplatz) ──
+  const loadSessions = useCallback(async () => {
+    setSessionsRefreshing(true);
+    try {
+      const list = await host.terminals.sessions();
+      setSessions(list);
+    } catch {
+      /* not in Tauri / no backend — leave empty */
+    } finally {
+      setSessionsRefreshing(false);
+    }
+  }, [host]);
+
+  // Resume any discovered session in a fresh in-app terminal (claude --resume <id>
+  // in its project dir) — bridges an external session into the cockpit.
+  const resumeSession = useCallback(
+    async (s: ClaudeSession) => {
+      // Defense-in-depth: only resume a uuid-shaped id (it becomes a `claude
+      // --resume <id>` arg). Non-uuid ids can't come from a real session anyway.
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s.id)) {
+        host.notifications.notify("Fortsetzen nicht möglich", "Session-ID ungültig.");
+        return;
+      }
+      try {
+        const id = await host.terminals.spawn({
+          cmd: "claude",
+          args: ["--resume", s.id],
+          cwd: s.cwdExists ? s.projectPath : undefined,
+          title: s.title,
+        });
+        host.notifications.notify("Session fortgesetzt", `${s.title} · ${s.projectName}`);
+        await loadTerms();
+        const list = await host.terminals.list();
+        setActiveTerm(list.find((t) => t.id === id) ?? null);
+      } catch (e) {
+        host.notifications.notify(
+          "Fortsetzen fehlgeschlagen",
+          e instanceof Error ? e.message : String(e)
+        );
+      }
+    },
+    [host, loadTerms]
+  );
 
   // Projects the cockpit can open a terminal in.
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
@@ -715,10 +1028,15 @@ function DashboardView({ host }: { host: HostApi }) {
   useEffect(() => {
     void loadTasks();
     void loadTerms();
-    // Poll terminals so the panel stays live as ptys spawn/exit.
+    void loadSessions();
+    // Poll terminals + Claude sessions so the board stays live.
     const iv = window.setInterval(() => void loadTerms(), 2500);
-    return () => window.clearInterval(iv);
-  }, [loadTasks, loadTerms]);
+    const sv = window.setInterval(() => void loadSessions(), 4000);
+    return () => {
+      window.clearInterval(iv);
+      window.clearInterval(sv);
+    };
+  }, [loadTasks, loadTerms, loadSessions]);
 
   // ── Row actions ──
   const onChat = useCallback(
@@ -819,6 +1137,14 @@ function DashboardView({ host }: { host: HostApi }) {
           ))}
         </div>
       )}
+
+      <SessionsBoard
+        host={host}
+        sessions={sessions}
+        refreshing={sessionsRefreshing}
+        onResume={resumeSession}
+        onRefresh={loadSessions}
+      />
 
       <div className="dash-grid">
         <TaskList

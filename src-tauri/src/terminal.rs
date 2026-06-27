@@ -128,7 +128,8 @@ fn default_command() -> (String, Vec<String>) {
 /// macOS GUI apps inherit a minimal PATH, so a bare command like `ollama` or `claude`
 /// won't resolve. Resolve a bare cmd to its absolute path by probing the common bin
 /// dirs (the same ones we add to the child PATH below). Falls back to the bare name.
-fn resolve_cmd(cmd: &str) -> String {
+/// `pub(crate)` so the assistant module can resolve `claude` the same way.
+pub(crate) fn resolve_cmd(cmd: &str) -> String {
     if cmd.contains('/') {
         return cmd.to_string();
     }
@@ -151,7 +152,8 @@ fn resolve_cmd(cmd: &str) -> String {
 
 /// PATH the spawned PTY (and its subprocesses) should see — common tool locations
 /// prepended to whatever the app inherited, so ollama/claude/brew tools resolve.
-fn child_path() -> String {
+/// `pub(crate)` so the assistant module gives `claude -p` the same PATH.
+pub(crate) fn child_path() -> String {
     let mut parts: Vec<String> = Vec::new();
     if let Some(h) = dirs::home_dir() {
         parts.push(h.join(".local/bin").to_string_lossy().into_owned());

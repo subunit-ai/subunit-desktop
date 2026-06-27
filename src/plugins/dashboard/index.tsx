@@ -537,7 +537,19 @@ function SessionCard({
   const [showTodos, setShowTodos] = useState(false);
   const st = STAT[(s.status as TStatus)] ?? STAT.idle;
   return (
-    <div className={`sb-card ${st.cls}`}>
+    <div
+      className={`sb-card ${st.cls}`}
+      role="button"
+      tabIndex={0}
+      title="Öffnen: Session in einem Terminal fortsetzen"
+      onClick={() => onResume(s)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onResume(s);
+        }
+      }}
+    >
       <div className="sb-card-top">
         <span className={`ck-dot ${st.cls}`} />
         <div className="sb-card-tx">
@@ -554,7 +566,7 @@ function SessionCard({
         <span className="sb-when">{relTime(s.lastActivity)}</span>
         {!s.cwdExists && <span className="sb-warn">Ordner fehlt</span>}
         {s.todos.length > 0 && (
-          <button className="sb-todos-c" onClick={() => setShowTodos((v) => !v)}>
+          <button className="sb-todos-c" onClick={(e) => { e.stopPropagation(); setShowTodos((v) => !v); }}>
             {s.todos.length} offen{showTodos ? " ▾" : " ▸"}
           </button>
         )}
@@ -576,15 +588,23 @@ function SessionCard({
         <button
           className="ck-u1 sm"
           title="U1 zu dieser Session fragen"
-          onClick={() =>
+          onClick={(e) => {
+            e.stopPropagation();
             askU1(
               `Meine Claude-Session „${s.title}" im Projekt ${s.projectName} ist „${st.label}". Sie arbeitet an: ${s.lastPrompt || s.summary || "—"}.${s.todos.length ? ` Offene Punkte: ${s.todos.map((t) => t.content).join("; ")}.` : ""} Gib mir einen kurzen Überblick + was ich als Nächstes tun sollte.`
-            )
-          }
+            );
+          }}
         >
           ✦
         </button>
-        <button className="sb-resume" title="Session in einem Terminal hier fortsetzen" onClick={() => onResume(s)}>
+        <button
+          className="sb-resume"
+          title="Session in einem Terminal hier fortsetzen"
+          onClick={(e) => {
+            e.stopPropagation();
+            onResume(s);
+          }}
+        >
           Fortsetzen
         </button>
       </div>
@@ -724,8 +744,9 @@ function SessStyle() {
 .sb-group-n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sb-group-c{font-weight:600;color:var(--ink3);background:var(--glass2);border:1px solid var(--line);border-radius:999px;padding:0 8px;font-size:10.5px}
 .sb-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
-.sb-card{display:flex;flex-direction:column;gap:9px;padding:14px 15px;border-radius:var(--r-sm);background:var(--glass);backdrop-filter:blur(30px) saturate(1.6);-webkit-backdrop-filter:blur(30px) saturate(1.6);border:1px solid var(--glass-edge);box-shadow:var(--shadow-sm),inset 0 1px 0 var(--rim);transition:transform .18s cubic-bezier(.2,.8,.2,1),border-color .18s}
-.sb-card:hover{transform:translateY(-1px);border-color:var(--line2)}
+.sb-card{display:flex;flex-direction:column;gap:9px;padding:14px 15px;border-radius:var(--r-sm);background:var(--glass);backdrop-filter:blur(30px) saturate(1.6);-webkit-backdrop-filter:blur(30px) saturate(1.6);border:1px solid var(--glass-edge);box-shadow:var(--shadow-sm),inset 0 1px 0 var(--rim);cursor:pointer;transition:transform .18s cubic-bezier(.2,.8,.2,1),border-color .18s}
+.sb-card:hover{transform:translateY(-1px);border-color:rgba(6,182,212,.45)}
+.sb-card:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
 .sb-card.work{border-color:rgba(16,185,129,.3)}
 .sb-card.wait{border-color:rgba(251,191,36,.34);background:rgba(251,191,36,.05)}
 .sb-card-top{display:flex;align-items:flex-start;gap:10px}
@@ -885,6 +906,9 @@ function DashboardView({ host }: { host: HostApi }) {
   // The Arbeitsplatz: every Claude Code session on the Mac (external incl.).
   const [sessions, setSessions] = useState<ClaudeSession[]>([]);
   const [sessionsRefreshing, setSessionsRefreshing] = useState(false);
+
+  // Scroll the terminal rail into view when a pane opens (e.g. after a session click).
+  const railRef = useRef<HTMLDivElement>(null);
 
   // Local answer models (the downloaded ollama ones) used by "Lokal ausführen".
   const [runModels, setRunModels] = useState<{ id: string; label: string }[]>([]);
@@ -1097,6 +1121,11 @@ function DashboardView({ host }: { host: HostApi }) {
   const openTerm = useCallback((t: TermInfo) => setActiveTerm(t), []);
   const closePane = useCallback(() => setActiveTerm(null), []);
 
+  // When a terminal pane opens (e.g. via a session-card click), bring it into view.
+  useEffect(() => {
+    if (activeTerm) railRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [activeTerm]);
+
   const activeTermId = activeTerm?.id ?? null;
 
   const headline = useMemo(() => {
@@ -1157,7 +1186,7 @@ function DashboardView({ host }: { host: HostApi }) {
           runningTaskIds={runningTaskIds}
         />
 
-        <div className="dash-rail">
+        <div className="dash-rail" ref={railRef}>
           {activeTerm ? (
             <TerminalPane host={host} term={activeTerm} onClose={closePane} />
           ) : (

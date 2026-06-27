@@ -6,6 +6,7 @@
 //! instance, tray, updater). Module data flows over HTTP from the frontend.
 
 mod apps; // marketplace: detect/open/install standalone Subunit apps
+mod assistant; // ubiquitous U1 assistant — local ollama / claude -p (subscription)
 mod auth;
 mod ingest; // synapse → real n8n axon-ingest webhooks
 mod commands;
@@ -100,6 +101,8 @@ pub fn run() {
             apps::install_app,
             // Synapse → real n8n webhooks (ingest.rs).
             ingest::synapse_ingest,
+            // Ubiquitous U1 assistant — local providers (assistant.rs).
+            assistant::u1_ask,
         ])
         .setup(|app| {
             log::info!(

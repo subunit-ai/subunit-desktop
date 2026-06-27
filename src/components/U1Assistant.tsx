@@ -15,70 +15,34 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getToken } from "../lib/auth";
+import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { isTauri } from "../lib/ipc";
 import { SubunitMark } from "./SubunitMark";
 
-const CHAT = "https://chat.subunit.ai";
-const THREAD_KEY = "subunit.u1.thread";
+/** Where U1 runs — local model or Claude over the Max subscription. */
+type Provider = "claude" | "local";
+const PROVIDER_KEY = "subunit.u1.provider";
+const PROVIDERS: { id: Provider; label: string; model: string; hint: string }[] = [
+  { id: "claude", label: "Claude · Abo", model: "opus", hint: "Opus über dein Max-Abo (claude -p)" },
+  { id: "local", label: "Lokal", model: "qwen2.5:7b-instruct", hint: "On-device via ollama, privat" },
+];
+
+const U1_SYSTEM =
+  "Du bist U1 (Unit One), TJs operativer KI-Partner — kein generischer Assistent. " +
+  "Du läufst lokal in der Subunit-Desktop-App auf dem Mac. Sprich von „wir/uns“, sei direkt, " +
+  "kompetent und knapp, mit Markdown wenn es hilft, und beende mit einem klaren nächsten Schritt. Antworte auf Deutsch.";
 
 interface Msg {
   role: "user" | "u1";
   text: string;
 }
 
-/** Stream a u1-chat message: POST → SSE (event: delta {text} | done | error). */
-async function streamU1(
-  threadId: string,
-  content: string,
-  token: string,
-  onDelta: (t: string) => void,
-  signal: AbortSignal
-): Promise<void> {
-  const res = await fetch(`${CHAT}/api/threads/${threadId}/message`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ content }),
-    signal,
-  });
-  if (!res.ok || !res.body) throw new Error(`u1 ${res.status}`);
-  const reader = res.body.getReader();
-  const dec = new TextDecoder();
-  let buf = "";
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    let idx: number;
-    while ((idx = buf.indexOf("\n\n")) >= 0) {
-      const rec = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
-      let event = "message";
-      const data: string[] = [];
-      for (const line of rec.split("\n")) {
-        if (line.startsWith("event:")) event = line.slice(6).trim();
-        else if (line.startsWith("data:")) data.push(line.slice(5).trim());
-      }
-      const payload = data.join("\n");
-      if (event === "delta") {
-        try {
-          onDelta((JSON.parse(payload) as { text?: string }).text ?? "");
-        } catch {
-          /* ignore malformed chunk */
-        }
-      } else if (event === "done") {
-        return;
-      } else if (event === "error") {
-        let m = "Die Antwort konnte nicht erzeugt werden.";
-        try {
-          m = (JSON.parse(payload) as { message?: string }).message ?? m;
-        } catch {
-          /* keep default */
-        }
-        throw new Error(m);
-      }
-    }
-  }
-}
+// Tauri streaming events from assistant.rs (u1_ask).
+const U1_EVENTS = { delta: "u1://delta", done: "u1://done", error: "u1://error" } as const;
+interface DeltaEvt { requestId: string; text: string }
+interface DoneEvt { requestId: string }
+interface ErrEvt { requestId: string; message: string }
 
 export function U1Assistant({ pageName }: { pageName: string }) {
   const [open, setOpen] = useState(false);
@@ -86,18 +50,94 @@ export function U1Assistant({ pageName }: { pageName: string }) {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const threadRef = useRef<string | null>(null);
+  const [provider, setProvider] = useState<Provider>(() => {
+    try {
+      return (localStorage.getItem(PROVIDER_KEY) as Provider) || "claude";
+    } catch {
+      return "claude";
+    }
+  });
   const bodyRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const acRef = useRef<AbortController | null>(null);
-
-  // Restore the persistent thread id.
+  const reqRef = useRef<string | null>(null);
+  const lastActivityRef = useRef(0);
+  // Latest msgs in a ref so the once-mounted stream listener appends correctly.
+  const msgsRef = useRef<Msg[]>([]);
   useEffect(() => {
+    msgsRef.current = msgs;
+  }, [msgs]);
+
+  const pickProvider = useCallback((p: Provider) => {
+    setProvider(p);
     try {
-      threadRef.current = localStorage.getItem(THREAD_KEY);
+      localStorage.setItem(PROVIDER_KEY, p);
     } catch {
-      /* storage unavailable */
+      /* ignore */
     }
+  }, []);
+
+  // Stream listener (mounted once): append deltas / finish / error for the active request.
+  useEffect(() => {
+    if (!isTauri()) return;
+    const offs: UnlistenFn[] = [];
+    let alive = true;
+    const reg = (p: Promise<UnlistenFn>) => p.then((u) => (alive ? offs.push(u) : u()));
+    const appendDelta = (t: string) =>
+      setMsgs((m) => {
+        const next = m.slice();
+        const last = next[next.length - 1];
+        if (last && last.role === "u1") next[next.length - 1] = { role: "u1", text: last.text + t };
+        return next;
+      });
+    reg(
+      listen<DeltaEvt>(U1_EVENTS.delta, (e) => {
+        if (e.payload.requestId !== reqRef.current) return;
+        lastActivityRef.current = Date.now();
+        appendDelta(e.payload.text);
+      })
+    );
+    reg(
+      listen<DoneEvt>(U1_EVENTS.done, (e) => {
+        if (e.payload.requestId !== reqRef.current) return;
+        reqRef.current = null;
+        setBusy(false);
+      })
+    );
+    reg(
+      listen<ErrEvt>(U1_EVENTS.error, (e) => {
+        if (e.payload.requestId !== reqRef.current) return;
+        reqRef.current = null;
+        setBusy(false);
+        setErr(e.payload.message || "Antwort fehlgeschlagen.");
+        setMsgs((cur) => {
+          const n = cur.slice();
+          if (n.length && n[n.length - 1].role === "u1" && !n[n.length - 1].text) n.pop();
+          return n;
+        });
+      })
+    );
+    return () => {
+      alive = false;
+      offs.forEach((o) => o());
+    };
+  }, []);
+
+  // Inactivity watchdog: if a request produces no delta/done/error for a while
+  // (hung model/CLI), unstick the UI so "busy" can never wedge forever.
+  useEffect(() => {
+    const iv = window.setInterval(() => {
+      if (reqRef.current && Date.now() - lastActivityRef.current > 90000) {
+        reqRef.current = null;
+        setBusy(false);
+        setErr("Zeitüberschreitung — U1 hat zu lange nicht geantwortet. Nochmal versuchen oder den Anbieter wechseln.");
+        setMsgs((cur) => {
+          const n = cur.slice();
+          if (n.length && n[n.length - 1].role === "u1" && !n[n.length - 1].text) n.pop();
+          return n;
+        });
+      }
+    }, 5000);
+    return () => window.clearInterval(iv);
   }, []);
 
   // ⌘J / Ctrl-J toggles; Esc closes.
@@ -123,74 +163,48 @@ export function U1Assistant({ pageName }: { pageName: string }) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [msgs, open]);
 
-  // Tear down any in-flight stream on unmount.
-  useEffect(() => () => acRef.current?.abort(), []);
-
-  const ensureThread = useCallback(async (token: string): Promise<string> => {
-    if (threadRef.current) return threadRef.current;
-    const res = await fetch(`${CHAT}/api/threads`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({}),
-    });
-    if (!res.ok) throw new Error(`u1 ${res.status}`);
-    const data = (await res.json()) as { thread?: { id?: string }; id?: string };
-    const id = data.thread?.id ?? data.id;
-    if (!id) throw new Error("kein Thread");
-    threadRef.current = id;
-    try {
-      localStorage.setItem(THREAD_KEY, id);
-    } catch {
-      /* ignore */
-    }
-    return id;
-  }, []);
-
   const ask = useCallback(
     async (raw: string) => {
       const text = raw.trim();
-      if (!text || busy) return;
+      // reqRef is a synchronous guard against double-submit (busy may not have
+      // re-rendered yet between two fast clicks).
+      if (!text || busy || reqRef.current) return;
       setErr(null);
       setInput("");
+      if (!isTauri()) {
+        setErr("Der Assistent läuft in der Subunit-App (lokales Modell oder Claude-Abo) — im Browser nicht verfügbar.");
+        return;
+      }
+      // Build the conversation (system + prior turns + new question) for the model.
+      const history = msgsRef.current
+        .map((m) => ({ role: m.role === "u1" ? "assistant" : "user", content: m.text }))
+        .filter((m) => m.content.trim());
+      const messages = [
+        { role: "system", content: `${U1_SYSTEM}\n\n[Kontext: Der Nutzer ist gerade auf der Seite „${pageName}".]` },
+        ...history,
+        { role: "user", content: text },
+      ];
       setMsgs((m) => [...m, { role: "user", text }, { role: "u1", text: "" }]);
       setBusy(true);
-      const ac = new AbortController();
-      acRef.current = ac;
+      const reqId = `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+      reqRef.current = reqId;
+      lastActivityRef.current = Date.now();
+      const conf = PROVIDERS.find((p) => p.id === provider) ?? PROVIDERS[0];
       try {
-        const token = await getToken();
-        if (!token) throw new Error("Nicht angemeldet — melde dich oben rechts an, um U1 zu fragen.");
-        const threadId = await ensureThread(token);
-        // Pass the current page as context so U1 answers about where you are.
-        const content = `[Kontext: Der Nutzer ist in der Subunit-Desktop-App, aktuell auf der Seite „${pageName}".]\n\n${text}`;
-        await streamU1(
-          threadId,
-          content,
-          token,
-          (delta) =>
-            setMsgs((m) => {
-              const next = m.slice();
-              const last = next[next.length - 1];
-              if (last && last.role === "u1") next[next.length - 1] = { role: "u1", text: last.text + delta };
-              return next;
-            }),
-          ac.signal
-        );
+        // Returns immediately; the answer streams back via the u1://* listener.
+        await invoke("u1_ask", { requestId: reqId, provider, model: conf.model, messages });
       } catch (e) {
-        if (ac.signal.aborted) return;
-        const m = e instanceof Error ? e.message : String(e);
-        setErr(m);
-        // Drop the empty u1 bubble on failure.
+        reqRef.current = null;
+        setBusy(false);
+        setErr(e instanceof Error ? e.message : String(e));
         setMsgs((cur) => {
           const n = cur.slice();
           if (n.length && n[n.length - 1].role === "u1" && !n[n.length - 1].text) n.pop();
           return n;
         });
-      } finally {
-        setBusy(false);
-        acRef.current = null;
       }
     },
-    [busy, ensureThread, pageName]
+    [busy, pageName, provider]
   );
 
   // Plugins (e.g. E-Mail) can ask U1 with their own context via a window event:
@@ -234,6 +248,18 @@ export function U1Assistant({ pageName }: { pageName: string }) {
             <div className="u1a-head-tx">
               <b>U1</b>
               <span className="u1a-ctx">auf: {pageName}</span>
+            </div>
+            <div className="u1a-prov" role="group" aria-label="Wo U1 läuft">
+              {PROVIDERS.map((p) => (
+                <button
+                  key={p.id}
+                  className={`u1a-prov-b${provider === p.id ? " on" : ""}`}
+                  title={p.hint}
+                  onClick={() => pickProvider(p.id)}
+                >
+                  {p.label}
+                </button>
+              ))}
             </div>
             <button className="u1a-x" onClick={() => setOpen(false)} aria-label="Schließen">
               <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12" /></svg>
@@ -305,6 +331,10 @@ function AssistantStyle() {
 .u1a-head-tx{flex:1;display:flex;flex-direction:column;line-height:1.15}
 .u1a-head-tx b{font-size:14px;font-weight:680}
 .u1a-ctx{font-size:11px;color:var(--cyan-d,#0891b2)}
+.u1a-prov{flex:none;display:flex;gap:2px;padding:2px;border-radius:999px;background:var(--fill-weak);border:1px solid var(--line)}
+.u1a-prov-b{font:inherit;font-size:10.5px;font-weight:650;padding:4px 9px;border-radius:999px;border:none;background:none;color:var(--ink3);cursor:pointer;white-space:nowrap;transition:.14s}
+.u1a-prov-b:hover{color:var(--ink)}
+.u1a-prov-b.on{background:linear-gradient(160deg,#22d3ee,#06b6d4);color:#fff;box-shadow:0 3px 9px -4px rgba(6,182,212,.7)}
 .u1a-x{width:28px;height:28px;border-radius:8px;border:none;background:none;cursor:pointer;color:var(--ink3);display:grid;place-items:center}
 .u1a-x:hover{background:var(--fill-weak);color:var(--ink)}
 .u1a-x svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}

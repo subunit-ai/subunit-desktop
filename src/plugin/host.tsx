@@ -364,6 +364,14 @@ export function makeHostApi(
         gate("terminals", "terminals.sessions");
         return isTauri() ? invoke("list_claude_sessions") : Promise.resolve([]);
       },
+      focusTerminal: (tty) => {
+        gate("terminals", "terminals.focusTerminal");
+        return isTauri() ? invoke("focus_terminal", { tty }) : Promise.resolve();
+      },
+      openResume: (sessionId, cwd) => {
+        gate("terminals", "terminals.openResume");
+        return isTauri() ? invoke("open_terminal_resume", { sessionId, cwd }) : Promise.resolve();
+      },
       write: (tid, data) => {
         gate("terminals", "terminals.write");
         return ctrl.writeTerminal(tid, data);

@@ -94,6 +94,9 @@ pub fn run() {
             terminal::list_projects,
             // Read-only Claude Code session discovery for the cockpit (sessions.rs).
             sessions::list_claude_sessions,
+            // Bring a session's REAL Terminal.app tab to the front / open + resume.
+            sessions::focus_terminal,
+            sessions::open_terminal_resume,
             // Marketplace: standalone app detect/open/install (apps.rs).
             apps::app_status,
             apps::app_latest,

@@ -11,9 +11,10 @@
 //! Everything here is best-effort and read-only: a malformed transcript, a missing
 //! dir, or a failed `lsof` must never panic — we just skip and return what we have.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -53,6 +54,9 @@ pub struct ClaudeSession {
     pub cwd_exists: bool,
     /// Latest open todos Claude tracked (best-effort; often empty).
     pub todos: Vec<TodoItem>,
+    /// Controlling TTY of the live `claude` process (e.g. "ttys014") — lets the
+    /// cockpit bring the REAL Terminal.app tab to the front. None if not mapped.
+    pub tty: Option<String>,
 }
 
 fn now_ms() -> u64 {
@@ -131,28 +135,85 @@ fn is_uuid(s: &str) -> bool {
         })
 }
 
-/// Session ids that a running `claude` process is actively resuming — the precise
-/// "this session is live" signal. We scan `ps` for `claude … (-r|--resume) <uuid>`.
-/// (claude doesn't hold the transcript fd open, so lsof can't see it; the argv is
-/// the reliable source.) Best-effort: empty set if `ps` fails. Bare `claude`
-/// sessions without an id in argv fall back to recency.
-fn live_session_ids() -> HashSet<String> {
-    let mut ids = HashSet::new();
-    let out = std::process::Command::new("ps").args(["-Ao", "command="]).output();
-    if let Ok(o) = out {
-        for line in String::from_utf8_lossy(&o.stdout).lines() {
-            if !line.contains("claude") {
-                continue;
+/// A running `claude` CLI process and what we can learn about it from `ps`/`lsof`.
+struct LiveProc {
+    pid: String,
+    /// Controlling TTY ("ttys014") — the handle to its real Terminal.app tab.
+    tty: Option<String>,
+    /// The session uuid it's resuming, if launched with `-r/--resume <uuid>`.
+    uuid: Option<String>,
+    /// Working directory (only resolved for bare sessions, to map them by project).
+    cwd: Option<String>,
+}
+
+/// Enumerate running `claude` CLI processes (pid + tty + resume-uuid), then resolve
+/// the cwd of the bare ones via a single `lsof`. This is how the cockpit knows a
+/// session is live AND which real terminal tab it lives in.
+fn live_claude_procs() -> Vec<LiveProc> {
+    let mut procs: Vec<LiveProc> = Vec::new();
+    let out = match Command::new("ps").args(["-Ao", "pid=,tty=,command="]).output() {
+        Ok(o) => o,
+        Err(_) => return procs,
+    };
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        if !line.contains("claude") {
+            continue;
+        }
+        let toks: Vec<&str> = line.split_whitespace().collect();
+        if toks.len() < 3 {
+            continue;
+        }
+        // Columns: pid, tty, then the command (argv0 = toks[2]). Only real `claude`
+        // CLI processes — not a shell or `grep claude` that merely mentions it.
+        let argv0 = toks[2];
+        let is_claude = std::path::Path::new(argv0)
+            .file_name()
+            .map(|n| n == "claude")
+            .unwrap_or(false)
+            || argv0 == "claude";
+        if !is_claude {
+            continue;
+        }
+        let tty_raw = toks[1];
+        let tty = if tty_raw.is_empty() || tty_raw == "??" || tty_raw == "?" {
+            None
+        } else {
+            Some(tty_raw.to_string())
+        };
+        let mut uuid = None;
+        for w in toks.windows(2) {
+            if (w[0] == "-r" || w[0] == "--resume") && is_uuid(w[1]) {
+                uuid = Some(w[1].to_string());
             }
-            let toks: Vec<&str> = line.split_whitespace().collect();
-            for w in toks.windows(2) {
-                if (w[0] == "-r" || w[0] == "--resume") && is_uuid(w[1]) {
-                    ids.insert(w[1].to_string());
+        }
+        procs.push(LiveProc { pid: toks[0].to_string(), tty, uuid, cwd: None });
+    }
+
+    // Resolve cwd for the BARE procs (no resume uuid) so we can map them by project.
+    let bare: Vec<&str> = procs
+        .iter()
+        .filter(|p| p.uuid.is_none() && p.tty.is_some())
+        .map(|p| p.pid.as_str())
+        .collect();
+    if !bare.is_empty() {
+        if let Ok(o) = Command::new("lsof")
+            .args(["-a", "-d", "cwd", "-Fpn", "-p", &bare.join(",")])
+            .output()
+        {
+            let txt = String::from_utf8_lossy(&o.stdout);
+            let mut cur = String::new();
+            for line in txt.lines() {
+                if let Some(p) = line.strip_prefix('p') {
+                    cur = p.to_string();
+                } else if let Some(n) = line.strip_prefix('n') {
+                    if let Some(pr) = procs.iter_mut().find(|pr| pr.pid == cur) {
+                        pr.cwd = Some(n.to_string());
+                    }
                 }
             }
         }
     }
-    ids
+    procs
 }
 
 /// Read up to `max` bytes from the END of a file (cheap tailing of big transcripts).
@@ -255,19 +316,17 @@ fn find_todos(v: &serde_json::Value, depth: usize) -> Option<Vec<TodoItem>> {
 /// filled by the caller). Returns None for an unreadable/empty transcript.
 fn parse_session(
     path: &Path,
+    id: String,
     mtime_ms: u64,
     now: u64,
-    live_ids: &HashSet<String>,
+    live: bool,
+    tty: Option<String>,
 ) -> Option<ClaudeSession> {
     let tail = read_tail(path, 96 * 1024);
     if tail.trim().is_empty() {
         return None;
     }
 
-    let mut id = path
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
     let mut title = String::new();
     let mut last_prompt = String::new();
     let mut summary = String::new();
@@ -286,13 +345,6 @@ fn parse_session(
             Some("ai-title") => {
                 if let Some(t) = v.get("aiTitle").and_then(|x| x.as_str()) {
                     title = t.to_string();
-                }
-                // Only trust a transcript-supplied sessionId if it's uuid-shaped —
-                // this id flows to `claude --resume <id>` via the resume action.
-                if let Some(s) = v.get("sessionId").and_then(|x| x.as_str()) {
-                    if is_uuid(s) {
-                        id = s.to_string();
-                    }
                 }
             }
             Some("last-prompt") => {
@@ -333,7 +385,6 @@ fn parse_session(
     todos.retain(|t| t.status != "completed" && t.status != "done");
     todos.truncate(12);
 
-    let live = live_ids.contains(&id);
     let age = now.saturating_sub(mtime_ms);
     let status = if age < 10_000 {
         "working"
@@ -360,6 +411,7 @@ fn parse_session(
         last_activity: mtime_ms,
         cwd_exists: false,
         todos,
+        tty,
     })
 }
 
@@ -453,16 +505,138 @@ pub fn list_claude_sessions() -> Vec<ClaudeSession> {
     cands.sort_by(|a, b| b.mtime.cmp(&a.mtime));
     cands.truncate(CAP);
 
-    // 3. Parse just those (liveness from running `claude` processes, once).
-    let live = live_session_ids();
+    // 3. Liveness + real-terminal mapping from running `claude` processes (once).
+    let procs = live_claude_procs();
+    let uuid_tty: HashMap<String, String> = procs
+        .iter()
+        .filter_map(|p| match (&p.uuid, &p.tty) {
+            (Some(u), Some(t)) => Some((u.clone(), t.clone())),
+            _ => None,
+        })
+        .collect();
+
     let mut out: Vec<ClaudeSession> = Vec::with_capacity(cands.len());
     for c in cands {
-        if let Some(mut s) = parse_session(&c.path, c.mtime, now, &live) {
+        // The transcript filename is the canonical session uuid.
+        let id = c
+            .path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let tty = uuid_tty.get(&id).cloned();
+        let live = tty.is_some();
+        if let Some(mut s) = parse_session(&c.path, id, c.mtime, now, live, tty) {
             s.project_path = c.project_path;
             s.project_name = c.project_name;
             s.cwd_exists = c.cwd_exists;
             out.push(s);
         }
     }
+
+    // 4. Map BARE live procs (no resume uuid) to a session by working directory:
+    //    assign each to the newest still-unmapped session in its project, so a
+    //    fresh terminal can still be brought to the front on click.
+    for p in procs.iter().filter(|p| p.uuid.is_none() && p.tty.is_some()) {
+        let cwd = match &p.cwd {
+            Some(c) => c,
+            None => continue,
+        };
+        if let Some(s) = out
+            .iter_mut()
+            .find(|s| s.tty.is_none() && &s.project_path == cwd)
+        {
+            s.tty = p.tty.clone();
+            s.live = true;
+            if s.status == "idle" || s.status == "done" {
+                s.status = "waiting".to_string();
+            }
+        }
+    }
     out
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Open the REAL terminal — the cockpit is an overview; clicking a session brings
+// its actual Terminal.app tab to the front (or opens a fresh one + resumes it).
+// ════════════════════════════════════════════════════════════════════════════
+
+fn run_osascript(script: &str) -> Result<(), String> {
+    let out = Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .map_err(|e| format!("osascript: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+/// Escape a string for embedding inside an AppleScript double-quoted literal.
+fn as_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+/// POSIX single-quote a string for safe use inside a shell command.
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Bring the Terminal.app tab on `tty` (e.g. "ttys014") to the front. The tty is
+/// strictly validated so it can never break out of the AppleScript literal.
+#[tauri::command]
+pub fn focus_terminal(tty: String) -> Result<(), String> {
+    let t = tty.trim().trim_start_matches("/dev/");
+    let valid = t.starts_with("ttys")
+        && t.len() <= 12
+        && t[4..].chars().all(|c| c.is_ascii_digit())
+        && t.len() > 4;
+    if !valid {
+        return Err("ungültige TTY".into());
+    }
+    let dev = format!("/dev/{t}");
+    let script = format!(
+        "tell application \"Terminal\"\n\
+         activate\n\
+         repeat with w in windows\n\
+         repeat with tb in tabs of w\n\
+         if tty of tb is \"{dev}\" then\n\
+         set selected of tb to true\n\
+         set index of w to 1\n\
+         return\n\
+         end if\n\
+         end repeat\n\
+         end repeat\n\
+         end tell"
+    );
+    run_osascript(&script)
+}
+
+/// Open a NEW Terminal.app window and resume the session there (a real terminal —
+/// the cockpit is just the overview, work happens in the actual terminal). `cwd` is
+/// shell-quoted; `session_id` must be a uuid.
+#[tauri::command]
+pub fn open_terminal_resume(session_id: String, cwd: String) -> Result<(), String> {
+    if !is_uuid(&session_id) {
+        return Err("ungültige Session-ID".into());
+    }
+    let claude = crate::terminal::resolve_cmd("claude");
+    let dir = if !cwd.is_empty() && Path::new(&cwd).is_dir() {
+        cwd
+    } else {
+        dirs::home_dir()
+            .map(|h| h.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "~".to_string())
+    };
+    let shell_cmd = format!(
+        "cd {} && {} --resume {}",
+        sh_quote(&dir),
+        sh_quote(&claude),
+        session_id
+    );
+    let script = format!(
+        "tell application \"Terminal\"\nactivate\ndo script \"{}\"\nend tell",
+        as_escape(&shell_cmd)
+    );
+    run_osascript(&script)
 }

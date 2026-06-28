@@ -541,7 +541,7 @@ function SessionCard({
       className={`sb-card ${st.cls}`}
       role="button"
       tabIndex={0}
-      title="Öffnen: Session in einem Terminal fortsetzen"
+      title={s.tty ? "Klicken: echtes Terminal-Fenster in den Vordergrund holen" : "Klicken: Session in einem neuen Terminal öffnen"}
       onClick={() => onResume(s)}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -599,13 +599,13 @@ function SessionCard({
         </button>
         <button
           className="sb-resume"
-          title="Session in einem Terminal hier fortsetzen"
+          title={s.tty ? "Terminal-Fenster nach vorn" : "In neuem Terminal öffnen"}
           onClick={(e) => {
             e.stopPropagation();
             onResume(s);
           }}
         >
-          Fortsetzen
+          {s.tty ? "Zum Terminal ↗" : "Öffnen ↗"}
         </button>
       </div>
     </div>
@@ -958,35 +958,31 @@ function DashboardView({ host }: { host: HostApi }) {
     }
   }, [host]);
 
-  // Resume any discovered session in a fresh in-app terminal (claude --resume <id>
-  // in its project dir) — bridges an external session into the cockpit.
-  const resumeSession = useCallback(
+  // Open the REAL terminal for a session — the cockpit is just the overview, the
+  // work happens in the actual Terminal.app. If the session is live, bring its tab
+  // to the front; otherwise open a fresh terminal and resume it there.
+  const openRealTerminal = useCallback(
     async (s: ClaudeSession) => {
-      // Defense-in-depth: only resume a uuid-shaped id (it becomes a `claude
-      // --resume <id>` arg). Non-uuid ids can't come from a real session anyway.
-      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s.id)) {
-        host.notifications.notify("Fortsetzen nicht möglich", "Session-ID ungültig.");
-        return;
-      }
       try {
-        const id = await host.terminals.spawn({
-          cmd: "claude",
-          args: ["--resume", s.id],
-          cwd: s.cwdExists ? s.projectPath : undefined,
-          title: s.title,
-        });
-        host.notifications.notify("Session fortgesetzt", `${s.title} · ${s.projectName}`);
-        await loadTerms();
-        const list = await host.terminals.list();
-        setActiveTerm(list.find((t) => t.id === id) ?? null);
+        if (s.tty) {
+          await host.terminals.focusTerminal(s.tty);
+        } else {
+          // Defense-in-depth: only resume a uuid-shaped id (becomes `--resume <id>`).
+          if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s.id)) {
+            host.notifications.notify("Öffnen nicht möglich", "Session-ID ungültig.");
+            return;
+          }
+          await host.terminals.openResume(s.id, s.cwdExists ? s.projectPath : "");
+          host.notifications.notify("Terminal geöffnet", `${s.title} · ${s.projectName}`);
+        }
       } catch (e) {
         host.notifications.notify(
-          "Fortsetzen fehlgeschlagen",
+          "Konnte Terminal nicht öffnen",
           e instanceof Error ? e.message : String(e)
         );
       }
     },
-    [host, loadTerms]
+    [host]
   );
 
   // Projects the cockpit can open a terminal in.
@@ -1171,7 +1167,7 @@ function DashboardView({ host }: { host: HostApi }) {
         host={host}
         sessions={sessions}
         refreshing={sessionsRefreshing}
-        onResume={resumeSession}
+        onResume={openRealTerminal}
         onRefresh={loadSessions}
       />
 

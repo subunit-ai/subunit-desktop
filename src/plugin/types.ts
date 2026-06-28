@@ -228,6 +228,9 @@ export interface ClaudeSession {
   cwdExists: boolean;
   /** Latest open todos (best-effort; often empty). */
   todos: SessionTodo[];
+  /** Controlling TTY of the live process (e.g. "ttys014") — for focusing the real
+   * Terminal.app tab. Absent if the session isn't mapped to a running terminal. */
+  tty?: string;
 }
 
 export interface HostTerminals {
@@ -240,6 +243,10 @@ export interface HostTerminals {
    * included), newest activity first. Empty in non-Tauri/browser mode.
    */
   sessions(): Promise<ClaudeSession[]>;
+  /** Bring a session's REAL Terminal.app tab (by tty) to the front. */
+  focusTerminal(tty: string): Promise<void>;
+  /** Open a NEW real terminal and `claude --resume <id>` in cwd (revive a session). */
+  openResume(sessionId: string, cwd: string): Promise<void>;
   write(id: string, data: string): Promise<void>;
   kill(id: string): Promise<void>;
   /** Subscribe to output chunks for one pty; returns an unsubscribe fn. */

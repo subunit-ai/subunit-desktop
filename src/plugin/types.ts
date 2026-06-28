@@ -194,6 +194,12 @@ export interface ProjectInfo {
   git: boolean;
 }
 
+/** One conversation turn of a session (cockpit live pane). */
+export interface SessionTurn {
+  role: "user" | "assistant";
+  text: string;
+}
+
 /** An open todo Claude tracked in a session (best-effort). */
 export interface SessionTodo {
   content: string;
@@ -250,6 +256,8 @@ export interface HostTerminals {
   /** C1 orchestration: type a prompt into a live session's real terminal (by tty).
    * Only delivered if a running `claude` owns that tty (never a bare shell). */
   sendToTerminal(tty: string, text: string): Promise<void>;
+  /** Recent conversation turns of a session (live pane). Newest last. */
+  sessionTranscript(sessionId: string): Promise<SessionTurn[]>;
   write(id: string, data: string): Promise<void>;
   kill(id: string): Promise<void>;
   /** Subscribe to output chunks for one pty; returns an unsubscribe fn. */

@@ -99,6 +99,8 @@ pub fn run() {
             sessions::open_terminal_resume,
             // C1 orchestration: type a prompt into a live session's real terminal.
             sessions::send_to_terminal,
+            // Live transcript of a session for the cockpit's big pane.
+            sessions::session_transcript,
             // Marketplace: standalone app detect/open/install (apps.rs).
             apps::app_status,
             apps::app_latest,

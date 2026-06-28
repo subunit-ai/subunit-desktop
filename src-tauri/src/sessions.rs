@@ -556,6 +556,79 @@ pub fn list_claude_sessions() -> Vec<ClaudeSession> {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// Live transcript — the cockpit's big pane shows what a session is doing right now.
+// ════════════════════════════════════════════════════════════════════════════
+
+/// One conversation turn for the live pane.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Turn {
+    /// "user" | "assistant".
+    pub role: String,
+    pub text: String,
+}
+
+/// The recent turns of a session (user prompts + assistant replies), newest last —
+/// so the cockpit can render a live view of what that terminal is doing.
+#[tauri::command]
+pub fn session_transcript(session_id: String) -> Vec<Turn> {
+    if !is_uuid(&session_id) {
+        return Vec::new();
+    }
+    let root = match dirs::home_dir() {
+        Some(h) => h.join(".claude/projects"),
+        None => return Vec::new(),
+    };
+    let mut path = None;
+    if let Ok(dirs) = std::fs::read_dir(&root) {
+        for d in dirs.flatten() {
+            let p = d.path().join(format!("{session_id}.jsonl"));
+            if p.is_file() {
+                path = Some(p);
+                break;
+            }
+        }
+    }
+    let path = match path {
+        Some(p) => p,
+        None => return Vec::new(),
+    };
+
+    let tail = read_tail(&path, 256 * 1024);
+    let mut turns: Vec<Turn> = Vec::new();
+    for line in tail.lines() {
+        let line = line.trim();
+        if !line.starts_with('{') {
+            continue;
+        }
+        let v: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        match v.get("type").and_then(|t| t.as_str()) {
+            Some("user") => {
+                let t = extract_text(v.get("message"));
+                if !t.trim().is_empty() && !t.contains("tool_result") {
+                    turns.push(Turn { role: "user".into(), text: truncate(&t, 4000) });
+                }
+            }
+            Some("assistant") => {
+                let t = extract_text(v.get("message"));
+                if !t.trim().is_empty() {
+                    turns.push(Turn { role: "assistant".into(), text: truncate(&t, 4000) });
+                }
+            }
+            _ => {}
+        }
+    }
+    let n = turns.len();
+    if n > 16 {
+        turns.drain(0..n - 16);
+    }
+    turns
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // Open the REAL terminal — the cockpit is an overview; clicking a session brings
 // its actual Terminal.app tab to the front (or opens a fresh one + resumes it).
 // ════════════════════════════════════════════════════════════════════════════

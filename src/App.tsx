@@ -505,7 +505,7 @@ function Shell() {
       <aside className="dock">
         <div className="dock-brand">
           <BrandMark />
-          <b>Subunit</b>
+          <b>Sub<span className="brand-unit">unit</span></b>
         </div>
         <div className="dock-scroll">
           {grouped.map((g) => (

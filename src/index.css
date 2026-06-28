@@ -91,6 +91,14 @@ body {
   letter-spacing: -0.03em;
   color: var(--ink);
 }
+/* "Sub" stays ink, "unit" takes the cyan accent — readable in BOTH themes
+   (darker cyan on light for contrast, brighter cyan on dark). */
+.dock-brand b .brand-unit {
+  color: var(--cyan-d, #0891b2);
+}
+html.dark .dock-brand b .brand-unit {
+  color: var(--cyan, #22d3ee);
+}
 
 /* Nav groups (core / ops / comms). */
 .dock-scroll {

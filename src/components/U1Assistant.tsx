@@ -19,6 +19,16 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { isTauri } from "../lib/ipc";
 import { SubunitMark } from "./SubunitMark";
+import type { ClaudeSession, ProjectInfo } from "../plugin/types";
+
+/** A piece of context the user attached (Notion-style @) — a project or a session. */
+interface CtxItem {
+  key: string;
+  kind: "project" | "session";
+  label: string;
+  path?: string;
+  detail?: string;
+}
 
 /** Where U1 runs — local model or Claude over the Max subscription. */
 type Provider = "claude" | "local";
@@ -57,6 +67,11 @@ export function U1Assistant({ pageName }: { pageName: string }) {
       return "claude";
     }
   });
+  // Notion-style attached context (projects / sessions U1 should access).
+  const [ctx, setCtx] = useState<CtxItem[]>([]);
+  const [attachOpen, setAttachOpen] = useState(false);
+  const [projects, setProjects] = useState<ProjectInfo[]>([]);
+  const [attachSessions, setAttachSessions] = useState<ClaudeSession[]>([]);
   const bodyRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const reqRef = useRef<string | null>(null);
@@ -75,6 +90,23 @@ export function U1Assistant({ pageName }: { pageName: string }) {
       /* ignore */
     }
   }, []);
+
+  // Lazy-load the attach picker's projects + sessions when it opens.
+  useEffect(() => {
+    if (!attachOpen || !isTauri()) return;
+    invoke<ProjectInfo[]>("list_projects").then(setProjects).catch(() => {});
+    invoke<ClaudeSession[]>("list_claude_sessions").then(setAttachSessions).catch(() => {});
+  }, [attachOpen]);
+
+  const addProject = useCallback((p: ProjectInfo) => {
+    setCtx((c) => (c.some((x) => x.key === `p:${p.path}`) ? c : [...c, { key: `p:${p.path}`, kind: "project", label: p.name, path: p.path }]));
+    setAttachOpen(false);
+  }, []);
+  const addSession = useCallback((s: ClaudeSession) => {
+    setCtx((c) => (c.some((x) => x.key === `s:${s.id}`) ? c : [...c, { key: `s:${s.id}`, kind: "session", label: s.title, path: s.cwdExists ? s.projectPath : undefined, detail: s.lastPrompt }]));
+    setAttachOpen(false);
+  }, []);
+  const removeCtx = useCallback((key: string) => setCtx((c) => c.filter((x) => x.key !== key)), []);
 
   // Stream listener (mounted once): append deltas / finish / error for the active request.
   useEffect(() => {
@@ -179,8 +211,17 @@ export function U1Assistant({ pageName }: { pageName: string }) {
       const history = msgsRef.current
         .map((m) => ({ role: m.role === "u1" ? "assistant" : "user", content: m.text }))
         .filter((m) => m.content.trim());
+      // Attached context — tell U1 where it is + what it may access. For the claude
+      // provider we ALSO set cwd to the first attached project so it can read files.
+      const ctxLines = ctx.map((c) =>
+        c.kind === "project"
+          ? `- Projekt „${c.label}" — Ordner ${c.path}. Du kannst die Dateien dort direkt lesen.`
+          : `- Claude-Session „${c.label}"${c.detail ? ` (arbeitet an: ${c.detail})` : ""}${c.path ? ` — Ordner ${c.path}` : ""}.`
+      );
+      const ctxBlock = ctxLines.length ? `\n\nAngehängter Kontext (du hast Zugriff darauf):\n${ctxLines.join("\n")}` : "";
+      const cwd = ctx.find((c) => c.path)?.path;
       const messages = [
-        { role: "system", content: `${U1_SYSTEM}\n\n[Kontext: Der Nutzer ist gerade auf der Seite „${pageName}".]` },
+        { role: "system", content: `${U1_SYSTEM}\n\nDu hilfst gerade auf der Seite „${pageName}".${ctxBlock}` },
         ...history,
         { role: "user", content: text },
       ];
@@ -192,7 +233,7 @@ export function U1Assistant({ pageName }: { pageName: string }) {
       const conf = PROVIDERS.find((p) => p.id === provider) ?? PROVIDERS[0];
       try {
         // Returns immediately; the answer streams back via the u1://* listener.
-        await invoke("u1_ask", { requestId: reqId, provider, model: conf.model, messages });
+        await invoke("u1_ask", { requestId: reqId, provider, model: conf.model, messages, cwd });
       } catch (e) {
         reqRef.current = null;
         setBusy(false);
@@ -204,7 +245,7 @@ export function U1Assistant({ pageName }: { pageName: string }) {
         });
       }
     },
-    [busy, pageName, provider]
+    [busy, pageName, provider, ctx]
   );
 
   // Plugins (e.g. E-Mail) can ask U1 with their own context via a window event:
@@ -290,6 +331,46 @@ export function U1Assistant({ pageName }: { pageName: string }) {
             {err && <div className="u1a-err">{err}</div>}
           </div>
 
+          <div className="u1a-ctxbar">
+            <div className="u1a-add-wrap">
+              <button className="u1a-add" onClick={() => setAttachOpen((o) => !o)} title="Kontext anhängen (Projekt / Session)">+</button>
+              {attachOpen && (
+                <div className="u1a-attach" onMouseLeave={() => setAttachOpen(false)}>
+                  <div className="u1a-attach-sec">Projekte</div>
+                  {projects.length === 0 ? (
+                    <div className="u1a-attach-empty">—</div>
+                  ) : (
+                    projects.slice(0, 12).map((p) => (
+                      <button key={p.path} className="u1a-attach-i" onClick={() => addProject(p)}>
+                        <span className="u1a-attach-d project" /> {p.name}
+                        {p.git && <span className="u1a-attach-git">git</span>}
+                      </button>
+                    ))
+                  )}
+                  <div className="u1a-attach-sec">Sessions</div>
+                  {attachSessions.length === 0 ? (
+                    <div className="u1a-attach-empty">—</div>
+                  ) : (
+                    attachSessions.slice(0, 12).map((s) => (
+                      <button key={s.id} className="u1a-attach-i" onClick={() => addSession(s)}>
+                        <span className="u1a-attach-d session" /> <span className="u1a-attach-t">{s.title}</span>
+                        <span className="u1a-attach-proj">{s.projectName}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+            <span className="u1a-chip page" title="Aktuelle Seite">{pageName}</span>
+            {ctx.map((c) => (
+              <span key={c.key} className={`u1a-chip ${c.kind}`} title={c.path || c.detail || c.label}>
+                <span className={`u1a-chip-d ${c.kind}`} />
+                {c.label}
+                <button className="u1a-chip-x" onClick={() => removeCtx(c.key)} aria-label="Entfernen">×</button>
+              </span>
+            ))}
+          </div>
+
           <div className="u1a-input">
             <textarea
               ref={inputRef}
@@ -359,6 +440,28 @@ function AssistantStyle() {
 @keyframes u1a-bounce{0%,80%,100%{transform:translateY(0);opacity:.4}40%{transform:translateY(-4px);opacity:1}}
 .u1a-err{font-size:12px;color:#dc2626;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:10px;padding:9px 11px;line-height:1.4}
 
+.u1a-ctxbar{flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:9px 12px 0}
+.u1a-add-wrap{position:relative;flex:none}
+.u1a-add{width:24px;height:24px;border-radius:8px;border:1px dashed var(--line2,var(--line));background:var(--glass2);color:var(--ink2);font-size:16px;line-height:1;cursor:pointer;display:grid;place-items:center;padding:0}
+.u1a-add:hover{color:var(--cyan-d,#0891b2);border-color:rgba(6,182,212,.5)}
+.u1a-attach{position:absolute;left:0;bottom:calc(100% + 6px);z-index:40;width:250px;max-height:300px;overflow-y:auto;padding:6px;border-radius:var(--r-sm);border:1px solid var(--glass-edge2,var(--glass-edge));background:var(--menu-bg,var(--glass));backdrop-filter:blur(34px) saturate(1.7);-webkit-backdrop-filter:blur(34px) saturate(1.7);box-shadow:var(--shadow),inset 0 1px 0 var(--rim)}
+.u1a-attach-sec{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);padding:8px 8px 5px}
+.u1a-attach-empty{font-size:11.5px;color:var(--ink3);padding:3px 8px}
+.u1a-attach-i{display:flex;align-items:center;gap:7px;width:100%;text-align:left;padding:7px 8px;border:none;background:none;border-radius:8px;cursor:pointer;font:inherit;font-size:12px;color:var(--ink)}
+.u1a-attach-i:hover{background:var(--fill-weak)}
+.u1a-attach-t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.u1a-attach-proj{flex:none;font-size:9.5px;color:var(--ink3)}
+.u1a-attach-git{margin-left:auto;font-size:9px;font-weight:700;text-transform:uppercase;color:var(--cyan-d,#0891b2)}
+.u1a-attach-d{flex:none;width:7px;height:7px;border-radius:2px}
+.u1a-attach-d.project{background:var(--cyan,#22d3ee);border-radius:2px}
+.u1a-attach-d.session{background:#818cf8;border-radius:50%}
+.u1a-chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:3px 5px 3px 8px;border-radius:999px;border:1px solid var(--line);background:var(--glass2);color:var(--ink2);max-width:160px}
+.u1a-chip.page{padding:3px 9px;color:var(--cyan-d,#0891b2);border-color:rgba(6,182,212,.28);background:rgba(6,182,212,.07)}
+.u1a-chip-d{flex:none;width:6px;height:6px}
+.u1a-chip-d.project{background:var(--cyan,#22d3ee);border-radius:2px}
+.u1a-chip-d.session{background:#818cf8;border-radius:50%}
+.u1a-chip-x{border:none;background:none;color:var(--ink3);cursor:pointer;font-size:14px;line-height:1;padding:0 1px;border-radius:4px}
+.u1a-chip-x:hover{color:var(--ink);background:var(--fill-weak)}
 .u1a-input{flex:none;display:flex;align-items:flex-end;gap:8px;padding:11px 12px;border-top:1px solid var(--line)}
 .u1a-ta{flex:1;resize:none;max-height:120px;border:1px solid var(--line);background:var(--fill-weak);border-radius:13px;padding:10px 12px;font:inherit;font-size:13.5px;color:var(--ink);outline:none;line-height:1.4}
 .u1a-ta:focus{border-color:rgba(6,182,212,.45)}

@@ -87,11 +87,13 @@ pub fn u1_ask(
     provider: String,
     model: String,
     messages: Vec<ChatMsg>,
+    cwd: Option<String>,
 ) -> Result<(), String> {
     let model = if safe_model(&model) { model } else { String::new() };
     std::thread::spawn(move || match provider.as_str() {
         "local" => run_ollama(&app, &request_id, &model, &messages),
-        "claude" => run_claude(&app, &request_id, &model, &messages),
+        // cwd lets the (agentic) claude CLI read the project the user is working in.
+        "claude" => run_claude(&app, &request_id, &model, &messages, cwd.as_deref()),
         other => emit_error(&app, &request_id, &format!("Unbekannter Anbieter: {other}")),
     });
     Ok(())
@@ -146,7 +148,7 @@ fn run_ollama(app: &AppHandle, id: &str, model: &str, messages: &[ChatMsg]) {
 
 /// Claude Code over the Max subscription: the local `claude -p` CLI (no API key).
 /// We flatten the conversation into a single prompt and stream stdout as it writes.
-fn run_claude(app: &AppHandle, id: &str, model: &str, messages: &[ChatMsg]) {
+fn run_claude(app: &AppHandle, id: &str, model: &str, messages: &[ChatMsg], cwd: Option<&str>) {
     let mut sys = String::new();
     let mut turns: Vec<String> = Vec::new();
     for m in messages {
@@ -180,8 +182,14 @@ fn run_claude(app: &AppHandle, id: &str, model: &str, messages: &[ChatMsg]) {
     }
     cmd.arg(&prompt);
     cmd.env("PATH", crate::terminal::child_path());
-    if let Some(home) = dirs::home_dir() {
-        cmd.current_dir(home);
+    // Run in the project the user attached as context (so claude can read its files),
+    // falling back to HOME.
+    let dir = cwd
+        .filter(|c| !c.is_empty() && std::path::Path::new(c).is_dir())
+        .map(std::path::PathBuf::from)
+        .or_else(dirs::home_dir);
+    if let Some(d) = dir {
+        cmd.current_dir(d);
     }
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())

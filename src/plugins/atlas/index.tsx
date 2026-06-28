@@ -18,7 +18,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { isTauri } from "../../lib/ipc";
 import type { HostApi, PluginModule, SseMessage } from "../../plugin/types";
+
+/** Synthetic model option: retrieve locally, generate over the Max subscription. */
+const ABO_MODEL = "abo:opus";
 
 const ICON = `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg>`;
 
@@ -191,6 +197,7 @@ function AtlasView({ host }: { host: HostApi }) {
   const answerRef = useRef<HTMLDivElement>(null);
   const srcRefs = useRef<Map<number, HTMLLIElement>>(new Map());
   const cancelRef = useRef(false);
+  const atlasReqRef = useRef<string | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [model, setModel] = useState<string>("");
@@ -217,7 +224,16 @@ function AtlasView({ host }: { host: HostApi }) {
         const res = await host.backend.fetch("atlas-api", "/api/m/models");
         if (!res.ok || cancelled) return;
         const data = (await res.json()) as { models: ModelOption[]; default?: string };
-        setModels(data.models ?? []);
+        // Offer "Claude · Abo (Opus)" — retrieval stays local, generation runs over
+        // the Max subscription (claude -p). Only in the Tauri app (needs u1_ask).
+        const aboOpt: ModelOption = {
+          id: ABO_MODEL,
+          label: "Claude · Abo (Opus)",
+          provider: "anthropic",
+          kind: "cloud",
+          available: true,
+        };
+        setModels(isTauri() ? [aboOpt, ...(data.models ?? [])] : (data.models ?? []));
         const avail = (data.models ?? []).filter((m) => m.available);
         const pick =
           saved && avail.some((m) => m.id === saved)
@@ -237,6 +253,101 @@ function AtlasView({ host }: { host: HostApi }) {
     (id: string) => {
       setModel(id);
       void host.storage.set("atlas.model", id);
+    },
+    [host]
+  );
+
+  // Stream listener for the Abo (claude/Opus) generation path — appends tokens to the
+  // answer for the active atlas request, filtered by requestId.
+  useEffect(() => {
+    if (!isTauri()) return;
+    const offs: UnlistenFn[] = [];
+    let alive = true;
+    const reg = (p: Promise<UnlistenFn>) => p.then((u) => (alive ? offs.push(u) : u()));
+    reg(
+      listen<{ requestId: string; text: string }>("u1://delta", (e) => {
+        if (e.payload.requestId !== atlasReqRef.current) return;
+        // Stopped mid-stream → end the Abo request cleanly so busy can't get stuck.
+        if (cancelRef.current) {
+          atlasReqRef.current = null;
+          setBusy(false);
+          return;
+        }
+        setAnswer((a) => a + e.payload.text);
+      })
+    );
+    reg(
+      listen<{ requestId: string }>("u1://done", (e) => {
+        if (e.payload.requestId !== atlasReqRef.current) return;
+        atlasReqRef.current = null;
+        setVia("cloud");
+        setBusy(false);
+      })
+    );
+    reg(
+      listen<{ requestId: string; message: string }>("u1://error", (e) => {
+        if (e.payload.requestId !== atlasReqRef.current) return;
+        atlasReqRef.current = null;
+        setError(e.payload.message || "Abo-Generierung fehlgeschlagen.");
+        setBusy(false);
+      })
+    );
+    return () => {
+      alive = false;
+      offs.forEach((o) => o());
+    };
+  }, []);
+
+  // Atlas over the Max subscription: retrieve chunks locally, generate with Opus.
+  const askViaAbo = useCallback(
+    async (query: string) => {
+      try {
+        const res = await host.backend.fetch("atlas-api", "/api/m/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query, n_results: 8 }),
+        });
+        if (!res.ok) throw new Error(`Suche fehlgeschlagen (${res.status})`);
+        const data = (await res.json()) as {
+          results: { title?: string; uri?: string | null; text?: string; source?: string }[];
+        };
+        const results = data.results ?? [];
+        const srcs: Source[] = results.map((r, i) => ({
+          n: i + 1,
+          id: String(i + 1),
+          title: r.title || r.source || `Quelle ${i + 1}`,
+          uri: r.uri ?? null,
+          snippet: (r.text || "").slice(0, 400),
+          open: null,
+        }));
+        setSources(srcs);
+        setCited(new Set(srcs.map((s) => s.n)));
+        if (results.length === 0) {
+          setAnswer("Keine passenden Quellen im Wissensspeicher gefunden.");
+          setVia("cloud");
+          setBusy(false);
+          return;
+        }
+        const ctx = results
+          .map((r, i) => `[${i + 1}] ${r.title || r.source || ""}\n${(r.text || "").slice(0, 1200)}`)
+          .join("\n\n");
+        const messages = [
+          {
+            role: "system",
+            content:
+              "Du beantwortest die Frage AUSSCHLIESSLICH anhand der nummerierten Quellen. Zitiere die genutzten Quellen inline mit [n]. Wenn die Quellen die Frage nicht hergeben, sag das ehrlich. Knapp, auf Deutsch.",
+          },
+          { role: "user", content: `Frage: ${query}\n\nQuellen:\n${ctx}` },
+        ];
+        const reqId = `atlas${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+        atlasReqRef.current = reqId;
+        await invoke("u1_ask", { requestId: reqId, provider: "claude", model: "opus", messages });
+        // tokens + completion arrive via the listener above.
+      } catch (e) {
+        atlasReqRef.current = null;
+        setError(e instanceof Error ? e.message : String(e));
+        setBusy(false);
+      }
     },
     [host]
   );
@@ -282,6 +393,11 @@ function AtlasView({ host }: { host: HostApi }) {
       setCited(new Set());
       setVia(null);
       setAsked(query);
+      // Abo path: retrieve locally, generate over the subscription (Opus).
+      if (model === ABO_MODEL && isTauri()) {
+        await askViaAbo(query);
+        return;
+      }
       try {
         const stream = host.backend.sse("atlas-api", "/api/m/ask", {
           query,
@@ -345,7 +461,7 @@ function AtlasView({ host }: { host: HostApi }) {
         setBusy(false);
       }
     },
-    [busy, host, model]
+    [busy, host, model, askViaAbo]
   );
 
   const stop = useCallback(() => {

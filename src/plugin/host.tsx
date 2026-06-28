@@ -372,6 +372,10 @@ export function makeHostApi(
         gate("terminals", "terminals.openResume");
         return isTauri() ? invoke("open_terminal_resume", { sessionId, cwd }) : Promise.resolve();
       },
+      sendToTerminal: (tty, text) => {
+        gate("terminals", "terminals.sendToTerminal");
+        return isTauri() ? invoke("send_to_terminal", { tty, text }) : Promise.resolve();
+      },
       write: (tid, data) => {
         gate("terminals", "terminals.write");
         return ctrl.writeTerminal(tid, data);

@@ -247,6 +247,9 @@ export interface HostTerminals {
   focusTerminal(tty: string): Promise<void>;
   /** Open a NEW real terminal and `claude --resume <id>` in cwd (revive a session). */
   openResume(sessionId: string, cwd: string): Promise<void>;
+  /** C1 orchestration: type a prompt into a live session's real terminal (by tty).
+   * Only delivered if a running `claude` owns that tty (never a bare shell). */
+  sendToTerminal(tty: string, text: string): Promise<void>;
   write(id: string, data: string): Promise<void>;
   kill(id: string): Promise<void>;
   /** Subscribe to output chunks for one pty; returns an unsubscribe fn. */

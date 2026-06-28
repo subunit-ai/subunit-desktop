@@ -32,6 +32,7 @@ import type {
   ProjectInfo,
   TermInfo,
 } from "../../plugin/types";
+import { C1Panel } from "./C1";
 
 // Dock glyph — a control board (mirrors the original reference icon).
 const ICON = `<svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="12" width="7" height="9" rx="2"/><rect x="3" y="16" width="7" height="5" rx="2"/></svg>`;
@@ -618,12 +619,14 @@ function SessionsBoard({
   refreshing,
   onResume,
   onRefresh,
+  onC1,
 }: {
   host: HostApi;
   sessions: ClaudeSession[];
   refreshing: boolean;
   onResume: (s: ClaudeSession) => void;
   onRefresh: () => void;
+  onC1: () => void;
 }) {
   useSessionAttention(host, sessions);
   const [showDone, setShowDone] = useState(false);
@@ -677,8 +680,13 @@ function SessionsBoard({
         </div>
         <div className="sb-head-r">
           {sessions.length > 0 && (
+            <button className="sb-c1" onClick={onC1} title="C1: Cloud-Orchestrator (Opus) über alle Sessions">
+              <span className="sb-c1-badge">C1</span> Orchestrieren
+            </button>
+          )}
+          {sessions.length > 0 && (
             <button className="ck-u1" onClick={overview} title="U1: Überblick über alle Sessions">
-              ✦ U1 Überblick
+              ✦ U1
             </button>
           )}
           <button className="iconbtn dash-mini" onClick={onRefresh} title="Aktualisieren">
@@ -777,6 +785,9 @@ function SessStyle() {
 .sb-empty code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;background:var(--glass2);padding:1px 5px;border-radius:5px}
 .sb-more{display:block;margin:14px auto 0;font:inherit;font-size:12px;font-weight:600;color:var(--ink3);background:none;border:none;cursor:pointer;padding:6px 12px;border-radius:999px}
 .sb-more:hover{color:var(--cyan-d,#0891b2);background:var(--fill-weak)}
+.sb-c1{display:inline-flex;align-items:center;gap:7px;font:inherit;font-size:11.5px;font-weight:650;padding:5px 11px 5px 6px;border-radius:999px;border:1px solid rgba(99,102,241,.35);background:rgba(99,102,241,.08);color:#5b5bd6;cursor:pointer;white-space:nowrap;transition:.15s}
+.sb-c1:hover{background:rgba(99,102,241,.15);border-color:rgba(99,102,241,.5)}
+.sb-c1-badge{display:grid;place-items:center;width:20px;height:20px;border-radius:7px;font-size:10px;font-weight:800;color:#fff;background:linear-gradient(160deg,#818cf8,#6366f1)}
 `}</style>
   );
 }
@@ -909,6 +920,7 @@ function DashboardView({ host }: { host: HostApi }) {
 
   // Scroll the terminal rail into view when a pane opens (e.g. after a session click).
   const railRef = useRef<HTMLDivElement>(null);
+  const [c1Open, setC1Open] = useState(false);
 
   // Local answer models (the downloaded ollama ones) used by "Lokal ausführen".
   const [runModels, setRunModels] = useState<{ id: string; label: string }[]>([]);
@@ -1169,7 +1181,10 @@ function DashboardView({ host }: { host: HostApi }) {
         refreshing={sessionsRefreshing}
         onResume={openRealTerminal}
         onRefresh={loadSessions}
+        onC1={() => setC1Open(true)}
       />
+
+      {c1Open && <C1Panel host={host} sessions={sessions} onClose={() => setC1Open(false)} />}
 
       <div className="dash-grid">
         <TaskList

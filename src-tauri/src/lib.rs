@@ -97,6 +97,8 @@ pub fn run() {
             // Bring a session's REAL Terminal.app tab to the front / open + resume.
             sessions::focus_terminal,
             sessions::open_terminal_resume,
+            // C1 orchestration: type a prompt into a live session's real terminal.
+            sessions::send_to_terminal,
             // Marketplace: standalone app detect/open/install (apps.rs).
             apps::app_status,
             apps::app_latest,

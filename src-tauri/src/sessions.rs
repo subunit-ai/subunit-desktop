@@ -612,6 +612,75 @@ pub fn focus_terminal(tty: String) -> Result<(), String> {
     run_osascript(&script)
 }
 
+/// Send a prompt INTO a running session's terminal (C1 orchestration). The text is
+/// typed into the foreground program's stdin via `do script … in <tab>`.
+///
+/// SAFETY: we only inject into a tty that a live `claude` process currently owns —
+/// never a bare shell (where the text would execute as a command). Newlines are
+/// collapsed so it's a single submission.
+#[tauri::command]
+pub fn send_to_terminal(tty: String, text: String) -> Result<(), String> {
+    let t = tty.trim().trim_start_matches("/dev/");
+    let valid = t.starts_with("ttys")
+        && t.len() > 4
+        && t.len() <= 12
+        && t[4..].chars().all(|c| c.is_ascii_digit());
+    if !valid {
+        return Err("ungültige TTY".into());
+    }
+    let owned_by_claude = live_claude_procs()
+        .iter()
+        .any(|p| p.tty.as_deref() == Some(t));
+    if !owned_by_claude {
+        return Err("kein laufender Claude auf diesem Terminal — nicht gesendet".into());
+    }
+    // Collapse every kind of line break (incl. the Unicode separators U+2028/2029,
+    // which would otherwise break the AppleScript string literal) → one submission.
+    let oneline = text.replace(['\n', '\r', '\u{2028}', '\u{2029}'], " ");
+    let oneline = oneline.trim();
+    if oneline.is_empty() {
+        return Err("leerer Text".into());
+    }
+    let dev = format!("/dev/{t}");
+    // TOCTOU-safe: the "is a live claude still in this tab?" check happens INSIDE the
+    // same AppleScript, atomically right before the inject — so a claude that exits
+    // between our Rust pre-check and now can't cause the text to hit a bare shell.
+    let script = format!(
+        "tell application \"Terminal\"\n\
+         repeat with w in windows\n\
+         repeat with tb in tabs of w\n\
+         if tty of tb is \"{dev}\" then\n\
+         if ((processes of tb) as string) contains \"claude\" then\n\
+         do script \"{}\" in tb\n\
+         return \"sent\"\n\
+         else\n\
+         return \"no-claude\"\n\
+         end if\n\
+         end if\n\
+         end repeat\n\
+         end repeat\n\
+         return \"not-found\"\n\
+         end tell",
+        as_escape(oneline)
+    );
+    let out = Command::new("osascript")
+        .arg("-e")
+        .arg(&script)
+        .output()
+        .map_err(|e| format!("osascript: {e}"))?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    if stdout.contains("no-claude") {
+        return Err("Kein laufender Claude mehr in diesem Terminal — nicht gesendet".into());
+    }
+    if stdout.contains("not-found") {
+        return Err("Terminal-Tab nicht gefunden".into());
+    }
+    Ok(())
+}
+
 /// Open a NEW Terminal.app window and resume the session there (a real terminal —
 /// the cockpit is just the overview, work happens in the actual terminal). `cwd` is
 /// shell-quoted; `session_id` must be a uuid.
@@ -632,7 +701,7 @@ pub fn open_terminal_resume(session_id: String, cwd: String) -> Result<(), Strin
         "cd {} && {} --resume {}",
         sh_quote(&dir),
         sh_quote(&claude),
-        session_id
+        sh_quote(&session_id)
     );
     let script = format!(
         "tell application \"Terminal\"\nactivate\ndo script \"{}\"\nend tell",

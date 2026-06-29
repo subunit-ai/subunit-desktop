@@ -673,7 +673,7 @@ const plugin: PluginModule = {
     version: "1.0.0",
     description: "Subunit Neural Interface — U1 und seine Skills.",
     icon: ICON,
-    permissions: ["storage"],
+    permissions: ["storage", "backend:u1-chat"],
     nav: { section: "core", order: 1 },
     commands: [{ id: "open", title: "Go to SNI" }],
   },

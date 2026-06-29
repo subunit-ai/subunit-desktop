@@ -8,8 +8,10 @@
  * hardcoded code.
  *
  * Ported from the SNI U1Profile/U1Chat/VoiceCall reference (different stack) and
- * reframed onto the Liquid Glass design system. Fully mock/derived — no backend
- * yet, fully demoable offline. Math.random/new Date are runtime, so they're fine.
+ * reframed onto the Liquid Glass design system. The text chat ("Neural Bridge") is
+ * LIVE — it streams the real u1 over chat.subunit.ai (a persistent thread, synced
+ * with the Chat module + iOS). Timeline / cost / voice-orb stay mock/derived for
+ * now (no usage/cron API yet). Math.random/new Date are runtime, so they're fine.
  *
  * Subunit Liquid Glass — glass cards over an aurora mesh, ONE cyan accent.
  * Every class is scoped `.u1-` so styles never collide with other tabs.
@@ -18,6 +20,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { HostApi } from "../../../plugin/types";
 import { AGENTS, orchestratorOf } from "../agents";
+import { createThread, getThread, streamThreadMessage } from "../../../lib/u1chat";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Cron schedule — U1's day. 96 fifteen-minute slots (24h × 4).
@@ -284,19 +287,8 @@ function VoiceOrb() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Text chat — canned U1 replies, feels alive (typing dots + delay).
+// Text chat — LIVE u1 over chat.subunit.ai (persistent thread, synced w/ iOS).
 // ─────────────────────────────────────────────────────────────────────────
-
-const U1_RESPONSES = [
-  "Alle Systeme laufen nominal. Keine Anomalien in den letzten 24 Stunden.",
-  "Radar hat 12 neue Leads identifiziert — die Qualifizierungs-Pipeline läuft.",
-  "Aktueller Status: 8 von 11 Skills aktiv, Σ CPU bei 34 %.",
-  "Content arbeitet an 3 Blog-Posts parallel. ETA ~45 Minuten.",
-  "Aufgabe weitergeleitet an den zuständigen Skill — ich melde mich bei Abschluss.",
-  "Knowledge Base vor 2 Std. synchronisiert: 1.247 Einträge verfügbar.",
-  "Kein kritischer Handlungsbedarf. Alles im optimalen Bereich.",
-  "Analyse meldet einen positiven Conversion-Trend diese Woche.",
-];
 
 interface Msg {
   id: number;
@@ -306,42 +298,112 @@ interface Msg {
 
 function Chat({ host, color }: { host: HostApi; color: string }) {
   const [messages, setMessages] = useState<Msg[]>([
-    { id: 0, sender: "u1", text: "Unit One online. Alle Systeme nominal. Wie kann ich helfen?" },
+    { id: 0, sender: "u1", text: "Unit One online. Frag mich was — ich ziehe Kontext aus unserem geteilten Gedächtnis." },
   ]);
   const [input, setInput] = useState("");
-  const [typing, setTyping] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const idRef = useRef(1);
+  const threadRef = useRef<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const alive = useRef(true);
-  const replyTimer = useRef<number | undefined>(undefined);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, typing]);
+  }, [messages, sending]);
 
-  // Don't fire a pending reply (or its setState) after the tab unmounts.
+  // Restore the persistent u1 thread (the SAME cloud thread as the Chat module and
+  // subunit-ios). Offline / no saved thread just keeps the greeting.
   useEffect(() => {
     alive.current = true;
+    (async () => {
+      try {
+        const saved = (await host.storage.get("u1.thread")) as string | undefined;
+        if (!saved) return;
+        threadRef.current = saved;
+        const { messages: msgs } = await getThread(host, saved);
+        if (!alive.current || !msgs?.length) return;
+        const mapped = msgs
+          .filter((m) => m.role === "user" || m.role === "assistant")
+          .map((m, i) => ({ id: i + 1, sender: (m.role === "user" ? "user" : "u1") as Msg["sender"], text: m.content }));
+        if (mapped.length) {
+          setMessages(mapped);
+          idRef.current = mapped.length + 1;
+        }
+      } catch {
+        /* keep greeting */
+      }
+    })();
     return () => {
       alive.current = false;
-      if (replyTimer.current !== undefined) window.clearTimeout(replyTimer.current);
+      abortRef.current?.abort();
     };
-  }, []);
+  }, [host]);
 
-  const send = () => {
+  const send = async () => {
     const text = input.trim();
-    if (!text || typing) return;
-    setMessages((p) => [...p, { id: idRef.current++, sender: "user", text }]);
+    if (!text || sending) return;
+    setError(null);
+    // Ensure a persistent thread (continues across restarts; syncs with iOS).
+    let threadId = threadRef.current;
+    if (!threadId) {
+      try {
+        const t = await createThread(host, "opus");
+        threadId = t.id;
+        threadRef.current = t.id;
+        void host.storage.set("u1.thread", t.id);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Verbindung zu u1 fehlgeschlagen.");
+        return;
+      }
+    }
     setInput("");
-    setTyping(true);
-    replyTimer.current = window.setTimeout(() => {
-      if (!alive.current) return;
-      const reply = U1_RESPONSES[Math.floor(Math.random() * U1_RESPONSES.length)];
-      setTyping(false);
-      setMessages((p) => [...p, { id: idRef.current++, sender: "u1", text: reply }]);
-      host.notifications.notify("U1", reply);
-    }, 700 + Math.random() * 1100);
+    setSending(true);
+    const uId = idRef.current++;
+    const aId = idRef.current++;
+    setMessages((p) => [...p, { id: uId, sender: "user", text }, { id: aId, sender: "u1", text: "" }]);
+
+    const appendDelta = (t: string) =>
+      setMessages((p) => {
+        const next = p.slice();
+        const last = next[next.length - 1];
+        if (last && last.sender === "u1") next[next.length - 1] = { ...last, text: last.text + t };
+        return next;
+      });
+
+    const ac = new AbortController();
+    abortRef.current = ac;
+    try {
+      for await (const evt of streamThreadMessage(
+        host,
+        threadId,
+        { content: text, model: "opus", effort: "high" },
+        ac.signal,
+      )) {
+        if (evt.event === "delta") appendDelta((evt.data as { text?: string })?.text ?? "");
+        else if (evt.event === "error")
+          setError((evt.data as { message?: string })?.message || "Antwort fehlgeschlagen.");
+        // "meta" / "ratelimit" / "done" need no UI here — the Bridge is a lean console.
+      }
+    } catch (e) {
+      if (alive.current && !(e instanceof DOMException && e.name === "AbortError")) {
+        setError(e instanceof Error ? e.message : String(e));
+        // Drop the empty streaming bubble on a hard failure.
+        setMessages((p) =>
+          p.length && p[p.length - 1].sender === "u1" && !p[p.length - 1].text ? p.slice(0, -1) : p,
+        );
+      }
+    } finally {
+      if (abortRef.current === ac) abortRef.current = null;
+      if (alive.current) setSending(false);
+    }
   };
+
+  const lastEmptyU1 =
+    sending &&
+    messages[messages.length - 1]?.sender === "u1" &&
+    !messages[messages.length - 1]?.text;
 
   return (
     <div className="u1-card u1-chat">
@@ -350,20 +412,24 @@ function Chat({ host, color }: { host: HostApi; color: string }) {
         <span className="u1-live"><i style={{ background: color }} />live</span>
       </div>
       <div className="u1-chat-log">
-        {messages.map((m) => (
+        {messages.map((m, i) => (
           <div key={m.id} className={`u1-msg ${m.sender}`}>
             <span className="u1-msg-who">{m.sender === "user" ? "TJ" : "UNIT ONE"}</span>
-            <div className="u1-bubble">{m.text}</div>
+            <div className="u1-bubble">
+              {m.text ||
+                (lastEmptyU1 && i === messages.length - 1 ? (
+                  <span className="u1-typing"><i /><i /><i /></span>
+                ) : (
+                  ""
+                ))}
+            </div>
           </div>
         ))}
-        {typing && (
-          <div className="u1-msg u1">
-            <span className="u1-msg-who">UNIT ONE</span>
-            <div className="u1-bubble u1-typing"><i /><i /><i /></div>
-          </div>
-        )}
         <div ref={endRef} />
       </div>
+      {error && (
+        <div style={{ fontSize: "12px", color: "#dc2626", padding: "4px 6px", lineHeight: 1.4 }}>{error}</div>
+      )}
       <div className="u1-chat-in">
         <input
           value={input}
@@ -371,12 +437,12 @@ function Chat({ host, color }: { host: HostApi; color: string }) {
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              send();
+              void send();
             }
           }}
           placeholder="Befehl an U1 eingeben…"
         />
-        <button className="btn btn-primary" onClick={send} disabled={!input.trim() || typing}>
+        <button className="btn btn-primary" onClick={() => void send()} disabled={!input.trim() || sending}>
           Senden
         </button>
       </div>

@@ -1,25 +1,22 @@
 /**
- * Dashboard — the flagship built-in plugin: a glass Ops board.
+ * Cockpit — the landing surface: TJ's operative central station (plugin id stays
+ * "dashboard" so the shell's default landing keeps working).
  *
- * LEFT/MAIN  : a Notion-synced TASK list (host.notion.listTasks) rendered as
- *              glass rows with status pills. Each row has two actions:
- *                · "Chat mit u1"     → host.nav.navigate("chat") + host.events.emit
- *                                       seeds the chat plugin with the task.
- *                · "Lokal ausführen" → host.terminals.spawn({ cmd:"claude",
- *                                       args:["-p", task.title], taskId }) and
- *                                       opens that terminal in the right pane.
- * RIGHT/PANEL: "Aktive Terminals" — host.terminals.list() live; each a glass row
- *              (title · task · running dot · output preview). Clicking opens an
- *              xterm-like terminal pane: host.terminals.onOutput streams into a
- *              .codebox, an input field writes back via host.terminals.write.
+ * HERO   : <Cockpit> — every Claude Code session on the Mac, live (status, recent
+ *          turns, "Zum Terminal", per-session Manuell/Notify/Autonom + the C1
+ *          cloud orchestrator). The übergeordnete instance u1 helps here.
+ * GRID    :
+ *   · Projekte — host.terminals.projects(); click opens a terminal in that project.
+ *   · Aufgaben — REAL tasks from u1-chat (/api/tasks), synced with subunit-ios:
+ *                check off, delegate to u1 (seeds the Chat plugin) or run locally
+ *                (ollama). Replaces the old Notion placeholder.
+ * RAIL    : live PTY pane — host.terminals.list()/onOutput()/write(); spawned
+ *           shells stream into an xterm-like .codebox.
  *
- * Every surface is built from Subunit Liquid Glass classes + tokens only. The
- * desktop two-column layout + terminal pane sizing live in a scoped <style>
- * (plugin-root class `dash`), expressed entirely through design-system tokens —
- * no new palette, fonts, or glass recipe.
+ * Every surface is built from Subunit Liquid Glass classes + tokens only.
  *
- * Permissions: notion, terminals, events(ungated), nav(ungated), notifications,
- * storage.
+ * Permissions: terminals, notifications, storage, backend:atlas-api (local models),
+ * backend:u1-chat (tasks).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -27,11 +24,11 @@ import { createRoot, type Root } from "react-dom/client";
 import type {
   ClaudeSession,
   HostApi,
-  NotionTask,
   PluginModule,
   ProjectInfo,
   TermInfo,
 } from "../../plugin/types";
+import { listTasks, toggleTask, type TaskDTO } from "../../lib/u1chat";
 import { C1Panel } from "./C1";
 import { Cockpit } from "./Cockpit";
 
@@ -66,18 +63,15 @@ const ICONS = {
   send: "M22 2 11 13|22 2l-7 20-4-9-9-4 20-7Z",
   close: "M18 6 6 18|6 6l12 12",
   spark: "M12 3v6m0 6v6m9-9h-6M9 12H3|18.4 5.6l-4.2 4.2m-4.4 4.4-4.2 4.2",
+  check: "M20 6 9 17l-5-5",
 } as const;
 
-// ── status → pill class (design-system .pill live/wait/gone) ──────────────────
-function statusPill(status?: string): { cls: string; label: string } {
-  const s = (status ?? "").toLowerCase();
-  if (/done|complete|fertig|erledigt|abgeschlossen/.test(s))
-    return { cls: "live", label: status || "Done" };
-  if (/progress|doing|läuft|in arbeit|active|wip/.test(s))
-    return { cls: "wait", label: status || "In progress" };
-  if (/block|wait|hold|paused|warten/.test(s))
-    return { cls: "wait", label: status || "Blocked" };
-  return { cls: "gone", label: status || "Backlog" };
+// ── task priority → pill class (design-system .pill) ─────────────────────────
+function priorityMeta(priority?: string): { cls: string; label: string } {
+  const p = (priority ?? "").toLowerCase();
+  if (/hoch|high|p0|p1|dringend/.test(p)) return { cls: "wait", label: "Hoch" };
+  if (/niedrig|low|p3/.test(p)) return { cls: "gone", label: "Niedrig" };
+  return { cls: "gone", label: priority ? "Mittel" : "Aufgabe" };
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -334,6 +328,19 @@ function useTerminalStatus(host: HostApi, terms: TermInfo[]) {
     return () => window.clearInterval(iv);
   }, [host, terms]);
 
+  // Prune bookkeeping for terminals that no longer exist (avoid ref growth + a
+  // recycled pty id inheriting a stale "notified"/lastOut entry).
+  useEffect(() => {
+    const ids = new Set(terms.map((t) => t.id));
+    for (const k of Object.keys(lastOut.current)) if (!ids.has(k)) delete lastOut.current[k];
+    for (const id of [...notified.current]) if (!ids.has(id)) notified.current.delete(id);
+    setPreviews((p) => {
+      const next: Record<string, string> = {};
+      for (const k of Object.keys(p)) if (ids.has(k)) next[k] = p[k];
+      return next;
+    });
+  }, [terms]);
+
   const waiting = terms.filter((t) => status[t.id] === "waiting");
   return { status, previews, waiting };
 }
@@ -500,34 +507,129 @@ function CockpitStyle() {
 
 
 // ════════════════════════════════════════════════════════════════════════════
-// Task list (main column)
+// Projekte panel (cockpit grid) — open a terminal in any project.
 // ════════════════════════════════════════════════════════════════════════════
-function TaskList({
+function ProjektePanel({
+  projects,
+  onOpen,
+}: {
+  projects: ProjectInfo[];
+  onOpen: (p: ProjectInfo) => void;
+}) {
+  return (
+    <section className="card dash-projects">
+      <div className="dash-panel-head">
+        <div className="sect" style={{ margin: 0 }}>
+          Projekte
+        </div>
+        {projects.length > 0 && <span className="dash-proj-count">{projects.length}</span>}
+      </div>
+      {projects.length === 0 ? (
+        <div className="dash-panel-empty">
+          <b>Keine Projekte gefunden</b>
+          <span>Projekt-Ordner (z. B. unter ~/subunit) erscheinen hier — Klick öffnet ein Terminal darin.</span>
+        </div>
+      ) : (
+        <div className="dash-proj-list">
+          {projects.map((p) => (
+            <button
+              key={p.path}
+              className="dash-proj"
+              onClick={() => onOpen(p)}
+              title={`Terminal in „${p.name}" starten`}
+            >
+              <span className="dash-proj-n">{p.name}</span>
+              {p.git && <span className="ck-pick-git">git</span>}
+              <span className="dash-proj-go">
+                <Svg d={ICONS.terminal} />
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Tasks panel (cockpit grid) — REAL tasks from u1-chat (synced with subunit-ios).
+// ════════════════════════════════════════════════════════════════════════════
+function TasksPanel({
   tasks,
   loading,
   error,
+  onToggle,
   onChat,
   onRun,
   onRefresh,
   runningTaskIds,
 }: {
-  tasks: NotionTask[];
+  tasks: TaskDTO[];
   loading: boolean;
   error: string | null;
-  onChat: (t: NotionTask) => void;
-  onRun: (t: NotionTask) => void;
+  onToggle: (t: TaskDTO) => void;
+  onChat: (t: TaskDTO) => void;
+  onRun: (t: TaskDTO) => void;
   onRefresh: () => void;
   runningTaskIds: Set<string>;
 }) {
+  const open = tasks.filter((t) => !t.done);
+  const done = tasks.filter((t) => t.done);
+
+  const row = (t: TaskDTO) => {
+    const pri = priorityMeta(t.priority);
+    const running = runningTaskIds.has(t.id);
+    return (
+      <div className={`dash-task${t.done ? " is-done" : ""}`} key={t.id}>
+        <button
+          className={`dash-check${t.done ? " on" : ""}`}
+          onClick={() => onToggle(t)}
+          title={t.done ? "Als offen markieren" : "Als erledigt markieren"}
+        >
+          {t.done && <Svg d={ICONS.check} />}
+        </button>
+        <div className="dash-task-main">
+          <div className="dash-task-top">
+            {!t.done && <span className={`pill ${pri.cls}`}>{pri.label}</span>}
+            {t.project && <span className="badge">{t.project}</span>}
+            {running && <span className="badge">läuft lokal</span>}
+          </div>
+          <div className={`dash-task-title${t.done ? " done" : ""}`}>{t.title || "Untitled"}</div>
+        </div>
+        {!t.done && (
+          <div className="dash-task-actions">
+            <button
+              className="btn-ghost minibtn dash-act"
+              onClick={() => onChat(t)}
+              title="Diese Aufgabe mit u1 besprechen"
+            >
+              <span className="dash-ic">
+                <Svg d={ICONS.chat} />
+              </span>
+              Chat
+            </button>
+            <button
+              className="btn btn-primary minibtn dash-act"
+              onClick={() => onRun(t)}
+              title="Lokal mit einem Modell ausführen"
+            >
+              <span className="dash-ic">
+                <Svg d={ICONS.play} />
+              </span>
+              Lokal
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <section className="dash-main">
       <div className="dash-main-head">
         <div>
           <div className="ptitle">Aufgaben</div>
-          <div className="psub">
-            Notion-synchronisiert · an u1 delegieren oder lokal mit Claude
-            ausführen.
-          </div>
+          <div className="psub">Synchron mit subunit-ios · an u1 delegieren oder lokal ausführen.</div>
         </div>
         <button className="btn-ghost minibtn dash-refresh" onClick={onRefresh}>
           <span className={`dash-ic ${loading ? "dash-spin" : ""}`}>
@@ -537,13 +639,15 @@ function TaskList({
         </button>
       </div>
 
-      {error && <div className="callout dash-err">
-        <Svg d="M12 9v4|M12 17h.01|M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
-        <div>
-          <b>Notion nicht erreichbar</b>
-          <span>{error}</span>
+      {error && (
+        <div className="callout dash-err">
+          <Svg d="M12 9v4|M12 17h.01|M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+          <div>
+            <b>Aufgaben nicht erreichbar</b>
+            <span>{error}</span>
+          </div>
         </div>
-      </div>}
+      )}
 
       {loading && tasks.length === 0 ? (
         <div className="dash-loading">
@@ -557,51 +661,15 @@ function TaskList({
           </div>
           <b>Keine offenen Aufgaben</b>
           <span className="hint center">
-            Sobald in Notion Tasks anstehen, erscheinen sie hier als Glass-Reihen.
+            Aufgaben aus subunit-ios erscheinen hier als Glass-Reihen — abhaken, an u1
+            delegieren oder lokal ausführen.
           </span>
         </div>
       ) : (
         <div className="dash-tasks">
-          {tasks.map((t) => {
-            const pill = statusPill(t.status);
-            const running = runningTaskIds.has(t.id);
-            return (
-              <div className="dash-task" key={t.id}>
-                <div className="dash-task-main">
-                  <div className="dash-task-top">
-                    <span className={`pill ${pill.cls}`}>{pill.label}</span>
-                    {running && <span className="badge">läuft lokal</span>}
-                  </div>
-                  <div className="dash-task-title">{t.title || "Untitled"}</div>
-                  {typeof t.assignee === "string" && t.assignee && (
-                    <div className="dash-task-meta">{t.assignee}</div>
-                  )}
-                </div>
-                <div className="dash-task-actions">
-                  <button
-                    className="btn-ghost minibtn dash-act"
-                    onClick={() => onChat(t)}
-                    title="Diese Aufgabe mit u1 besprechen"
-                  >
-                    <span className="dash-ic">
-                      <Svg d={ICONS.chat} />
-                    </span>
-                    Chat mit u1
-                  </button>
-                  <button
-                    className="btn btn-primary minibtn dash-act"
-                    onClick={() => onRun(t)}
-                    title="Lokal mit Claude ausführen"
-                  >
-                    <span className="dash-ic">
-                      <Svg d={ICONS.play} />
-                    </span>
-                    Lokal ausführen
-                  </button>
-                </div>
-              </div>
-            );
-          })}
+          {open.map(row)}
+          {done.length > 0 && <div className="dash-done-h">Erledigt · {done.length}</div>}
+          {done.map(row)}
         </div>
       )}
     </section>
@@ -612,14 +680,19 @@ function TaskList({
 // Dashboard view (composes main + panel + pane)
 // ════════════════════════════════════════════════════════════════════════════
 function DashboardView({ host }: { host: HostApi }) {
-  const [tasks, setTasks] = useState<NotionTask[]>([]);
+  const [tasks, setTasks] = useState<TaskDTO[]>([]);
   const [tasksLoading, setTasksLoading] = useState(true);
   const [tasksError, setTasksError] = useState<string | null>(null);
 
   const [terms, setTerms] = useState<TermInfo[]>([]);
   const [termsRefreshing, setTermsRefreshing] = useState(false);
   const [activeTerm, setActiveTerm] = useState<TermInfo | null>(null);
-  const [runningTaskIds, setRunningTaskIds] = useState<Set<string>>(new Set());
+  // A task shows "läuft lokal" while a live terminal carries its taskId — derived
+  // from terms so the badge clears automatically when that terminal exits.
+  const runningTaskIds = useMemo(
+    () => new Set(terms.filter((t) => t.running && t.taskId).map((t) => t.taskId as string)),
+    [terms]
+  );
 
   // The Arbeitsplatz: every Claude Code session on the Mac (external incl.).
   const [sessions, setSessions] = useState<ClaudeSession[]>([]);
@@ -633,19 +706,38 @@ function DashboardView({ host }: { host: HostApi }) {
   const [runModels, setRunModels] = useState<{ id: string; label: string }[]>([]);
   const [runModel, setRunModel] = useState<string>("");
 
-  // ── Notion tasks ──
+  // ── Tasks (real, from u1-chat — synced with subunit-ios) ──
   const loadTasks = useCallback(async () => {
     setTasksLoading(true);
     setTasksError(null);
     try {
-      const list = await host.notion.listTasks();
+      const list = await listTasks(host);
       setTasks(list);
     } catch (err) {
-      setTasksError(err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      setTasksError(
+        /401|unauthorized/i.test(msg)
+          ? "Nicht angemeldet — melde dich oben rechts an."
+          : msg
+      );
     } finally {
       setTasksLoading(false);
     }
   }, [host]);
+
+  // Toggle a task done/open (optimistic, reconciled with the server).
+  const onToggle = useCallback(
+    async (t: TaskDTO) => {
+      setTasks((prev) => prev.map((x) => (x.id === t.id ? { ...x, done: x.done ? 0 : 1 } : x)));
+      try {
+        const updated = await toggleTask(host, t.id);
+        setTasks((prev) => prev.map((x) => (x.id === t.id ? updated : x)));
+      } catch {
+        setTasks((prev) => prev.map((x) => (x.id === t.id ? { ...x, done: t.done } : x)));
+      }
+    },
+    [host]
+  );
 
   // ── Terminals ──
   const loadTerms = useCallback(async () => {
@@ -779,12 +871,10 @@ function DashboardView({ host }: { host: HostApi }) {
 
   // ── Row actions ──
   const onChat = useCallback(
-    (t: NotionTask) => {
+    (t: TaskDTO) => {
       host.events.emit(CHAT_SEED_TOPIC, {
         taskId: t.id,
         title: t.title,
-        status: t.status,
-        url: t.url,
       });
       host.nav.navigate("chat");
     },
@@ -792,7 +882,7 @@ function DashboardView({ host }: { host: HostApi }) {
   );
 
   const onRun = useCallback(
-    async (t: NotionTask) => {
+    async (t: TaskDTO) => {
       // Argument-injection guard: a task title starting with "-" could be parsed as a
       // claude FLAG (e.g. an agent permission-bypass) instead of the prompt — and task
       // titles will come from Notion (external content). Refuse such titles, and pass
@@ -816,7 +906,6 @@ function DashboardView({ host }: { host: HostApi }) {
           taskId: t.id,
           title: t.title,
         });
-        setRunningTaskIds((s) => new Set(s).add(t.id));
         host.notifications.notify("Lokal gestartet", `${llm} arbeitet an: ${t.title}`);
         await loadTerms();
         // Open the freshly spawned pty in the pane.
@@ -844,9 +933,12 @@ function DashboardView({ host }: { host: HostApi }) {
   const activeTermId = activeTerm?.id ?? null;
 
   const headline = useMemo(() => {
-    const live = terms.filter((t) => t.running).length;
-    return live > 0 ? `${live} aktiv` : `${tasks.length} Aufgaben`;
-  }, [terms, tasks.length]);
+    const working = sessions.filter((s) => s.status === "working").length;
+    const waiting = sessions.filter((s) => s.status === "waiting").length;
+    if (waiting > 0) return `${waiting} wartet auf dich`;
+    if (working > 0) return `${working} arbeiten`;
+    return sessions.length > 0 ? `${sessions.length} Sessions` : `${tasks.length} Aufgaben`;
+  }, [sessions, tasks.length]);
 
   return (
     <div className="dash">
@@ -854,10 +946,10 @@ function DashboardView({ host }: { host: HostApi }) {
 
       <div className="dash-hero">
         <div className="dash-hero-tx">
-          <h1>Ops Board</h1>
+          <h1>Cockpit</h1>
           <p>
-            Notion-Aufgaben, an u1 delegierbar oder lokal mit Claude ausführbar —
-            mit Live-Terminals direkt daneben.
+            Deine Zentrale — alle Claude-Code-Sessions live, plus Projekte, Aufgaben
+            und u1 als übergeordnete Instanz, die mitarbeitet.
           </p>
         </div>
         <span className="chip dash-hero-chip">
@@ -894,15 +986,19 @@ function DashboardView({ host }: { host: HostApi }) {
       {c1Open && <C1Panel host={host} sessions={sessions} onClose={() => setC1Open(false)} />}
 
       <div className="dash-grid">
-        <TaskList
-          tasks={tasks}
-          loading={tasksLoading}
-          error={tasksError}
-          onChat={onChat}
-          onRun={onRun}
-          onRefresh={loadTasks}
-          runningTaskIds={runningTaskIds}
-        />
+        <div className="dash-maincol">
+          <ProjektePanel projects={projects} onOpen={newTerminal} />
+          <TasksPanel
+            tasks={tasks}
+            loading={tasksLoading}
+            error={tasksError}
+            onToggle={onToggle}
+            onChat={onChat}
+            onRun={onRun}
+            onRefresh={loadTasks}
+            runningTaskIds={runningTaskIds}
+          />
+        </div>
 
         <div className="dash-rail" ref={railRef}>
           {activeTerm ? (
@@ -967,6 +1063,26 @@ function DashStyle() {
 .dash-runchip.on{border-color:rgba(6,182,212,.4);color:var(--cyan-d);background:rgba(6,182,212,.08)}
 .dash-grid{display:grid;grid-template-columns:minmax(0,1fr) 384px;gap:20px;align-items:start}
 @media(max-width:980px){.dash-grid{grid-template-columns:1fr}}
+.dash-maincol{display:flex;flex-direction:column;gap:20px;min-width:0}
+
+/* ── projekte panel ── */
+.dash-projects{padding:16px 16px 14px}
+.dash-proj-count{font-size:11px;font-weight:700;color:var(--ink3)}
+.dash-proj-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.dash-proj{display:inline-flex;align-items:center;gap:8px;font:inherit;font-size:12.5px;font-weight:600;padding:8px 12px;border-radius:999px;border:1px solid var(--line);background:var(--glass2);color:var(--ink);cursor:pointer;transition:.15s}
+.dash-proj:hover{border-color:rgba(6,182,212,.4);color:var(--cyan-d);background:rgba(6,182,212,.06)}
+.dash-proj-go{display:inline-flex;width:14px;height:14px;color:var(--ink3)}
+.dash-proj-go svg{width:14px;height:14px}
+.dash-proj:hover .dash-proj-go{color:var(--cyan-d)}
+
+/* ── task check + done state ── */
+.dash-check{flex:none;width:24px;height:24px;border-radius:8px;border:1.6px solid var(--line2,var(--line));background:var(--glass2);cursor:pointer;display:grid;place-items:center;color:#fff;transition:.15s;align-self:center}
+.dash-check:hover{border-color:rgba(6,182,212,.5)}
+.dash-check.on{background:linear-gradient(160deg,#22d3ee,#06b6d4);border-color:transparent}
+.dash-check svg{width:14px;height:14px}
+.dash-task.is-done{opacity:.62}
+.dash-task-title.done{text-decoration:line-through;color:var(--ink3)}
+.dash-done-h{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--ink3);margin:8px 2px 2px}
 
 /* ── main: tasks ── */
 .dash-main{min-width:0}
@@ -1052,16 +1168,22 @@ let offCmd: (() => void) | null = null;
 const plugin: PluginModule = {
   manifest: {
     id: "dashboard",
-    name: "Dashboard",
-    version: "1.0.0",
+    name: "Cockpit",
+    version: "2.0.0",
     description:
-      "Ops board — Notion tasks, delegate to u1 or run locally, live terminals.",
+      "Deine Zentrale — alle Claude-Code-Sessions live, Projekte, Aufgaben & u1.",
     icon: ICON,
-    permissions: ["notion", "terminals", "notifications", "storage", "backend:atlas-api"],
-    nav: { section: "ops", order: 0 },
+    permissions: [
+      "terminals",
+      "notifications",
+      "storage",
+      "backend:atlas-api",
+      "backend:u1-chat",
+    ],
+    nav: { section: "core", order: 0 },
     commands: [
-      { id: "open", title: "Go to Ops Board" },
-      { id: "refresh", title: "Dashboard: refresh tasks" },
+      { id: "open", title: "Go to Cockpit" },
+      { id: "refresh", title: "Cockpit: refresh tasks" },
     ],
   },
   mount(container, host) {

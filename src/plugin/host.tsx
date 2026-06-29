@@ -292,6 +292,9 @@ function backendBase(name: string): string {
         ? BACKENDS.cloud
         : BACKEND_BASE_URL;
   }
+  // u1-chat (chat.subunit.ai) — the shared chat/team backend, always the cloud
+  // service (never the VITE_API_BASE sidecar). Same Subunit bearer as atlas-api.
+  if (name === "u1-chat") return BACKENDS["u1-chat"];
   return BACKEND_BASE_URL;
 }
 
@@ -639,6 +642,7 @@ async function* sseIterable(
       const { value, done } = await reader.read();
       if (done) break;
       buf += decoder.decode(value, { stream: true });
+      buf = buf.replace(/\r\n/g, "\n"); // normalise CRLF before record splitting
       let idx: number;
       // SSE records are separated by a blank line.
       while ((idx = buf.indexOf("\n\n")) >= 0) {
@@ -648,6 +652,7 @@ async function* sseIterable(
         if (msg) yield msg;
       }
     }
+    buf += decoder.decode(); // flush any UTF-8 multi-byte sequence buffered across chunks
     if (buf.trim()) {
       const msg = flush(buf);
       if (msg) yield msg;

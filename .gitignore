@@ -32,3 +32,7 @@ minisign*.key
 
 # Subunit Project Standard breadcrumb (intern, nicht committen)
 .u1/
+
+# dev-only visual preview harness (Cockpit etc.) — never ship
+/cockpit-preview.html
+/src/dev/

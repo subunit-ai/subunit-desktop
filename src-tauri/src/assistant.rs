@@ -7,6 +7,10 @@
 //!                `claude -p` CLI (no API key), streamed from its stdout.
 //! (More providers can slot in later.)
 //!
+//! Optional RAG: when the caller passes `memory`, the latest user message is first
+//! grounded against the u1 long-term memory (atlas-api `/api/m/search`) and the
+//! retrieved chunks are prepended as a system turn — best-effort, never fatal.
+//!
 //! `u1_ask` returns immediately and does the work on a thread, streaming the answer
 //! to the frontend as `u1://delta` events, ending with `u1://done` (or `u1://error`
 //! on failure). Each call carries a `requestId` so the UI can ignore stale streams.
@@ -35,6 +39,23 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 pub struct ChatMsg {
     pub role: String,
     pub content: String,
+}
+
+/// Optional RAG grounding for a `u1_ask` turn. When present, assistant.rs queries the
+/// u1 long-term memory (atlas-api `/api/m/search`) with the latest user message and
+/// prepends the retrieved chunks as a system turn. Best-effort: any failure/empty
+/// result simply means u1 answers without extra context.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryOpts {
+    /// atlas-api base URL (e.g. http://127.0.0.1:7850 or https://atlas-api.subunit.ai).
+    pub base: String,
+    /// Bearer for the cloud atlas-api; omit/empty for the local AUTH_DEV_BYPASS sidecar.
+    #[serde(default)]
+    pub token: Option<String>,
+    /// How many chunks to retrieve (default 6, clamped 1..=20).
+    #[serde(default)]
+    pub n_results: Option<u32>,
 }
 
 #[derive(Clone, Serialize)]
@@ -80,6 +101,8 @@ fn safe_model(m: &str) -> bool {
 }
 
 /// Ask U1 locally. Streams the answer via `u1://*` events; returns immediately.
+/// When `memory` is supplied, the latest user message is first grounded against the
+/// u1 long-term memory (atlas-api) and the retrieved context is prepended.
 #[tauri::command]
 pub fn u1_ask(
     app: AppHandle,
@@ -88,15 +111,98 @@ pub fn u1_ask(
     model: String,
     messages: Vec<ChatMsg>,
     cwd: Option<String>,
+    memory: Option<MemoryOpts>,
 ) -> Result<(), String> {
     let model = if safe_model(&model) { model } else { String::new() };
-    std::thread::spawn(move || match provider.as_str() {
-        "local" => run_ollama(&app, &request_id, &model, &messages),
-        // cwd lets the (agentic) claude CLI read the project the user is working in.
-        "claude" => run_claude(&app, &request_id, &model, &messages, cwd.as_deref()),
-        other => emit_error(&app, &request_id, &format!("Unbekannter Anbieter: {other}")),
+    std::thread::spawn(move || {
+        // Best-effort RAG grounding before generation (no-op if memory is None or
+        // nothing relevant is found).
+        let messages = match &memory {
+            Some(m) => prepend_memory(m, messages),
+            None => messages,
+        };
+        match provider.as_str() {
+            "local" => run_ollama(&app, &request_id, &model, &messages),
+            // cwd lets the (agentic) claude CLI read the project the user is working in.
+            "claude" => run_claude(&app, &request_id, &model, &messages, cwd.as_deref()),
+            other => emit_error(&app, &request_id, &format!("Unbekannter Anbieter: {other}")),
+        }
     });
     Ok(())
+}
+
+/// One hit from atlas-api `/api/m/search`.
+#[derive(Deserialize)]
+struct SearchHit {
+    title: Option<String>,
+    source: Option<String>,
+    text: Option<String>,
+}
+#[derive(Deserialize)]
+struct SearchResp {
+    results: Option<Vec<SearchHit>>,
+}
+
+/// Retrieve grounding context from the u1 long-term memory. Returns a formatted
+/// system-prompt block, or None on any error / empty result (best-effort).
+fn retrieve_memory(base: &str, token: Option<&str>, query: &str, n: u32) -> Option<String> {
+    let url = format!("{}/api/m/search", base.trim_end_matches('/'));
+    let mut req = crate::http::client()
+        .post(&url)
+        .timeout(Duration::from_secs(8))
+        .json(&serde_json::json!({ "query": query, "n_results": n }));
+    if let Some(t) = token {
+        if !t.is_empty() {
+            req = req.bearer_auth(t);
+        }
+    }
+    let resp = req.send().ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let results = resp.json::<SearchResp>().ok()?.results.unwrap_or_default();
+    let mut ctx = String::from(
+        "Kontext aus dem u1-Langzeitgedächtnis (nutze ihn, wenn er zur Frage passt; \
+         wenn nicht, ignoriere ihn — erfinde nichts):\n\n",
+    );
+    let mut used = 0usize;
+    for r in results.iter() {
+        let text = r.text.as_deref().unwrap_or("").trim();
+        if text.is_empty() {
+            continue;
+        }
+        let title = r.title.as_deref().or(r.source.as_deref()).unwrap_or("Quelle");
+        let snippet: String = text.chars().take(1200).collect();
+        used += 1;
+        ctx.push_str(&format!("[{used}] {title}\n{snippet}\n\n"));
+    }
+    if used == 0 {
+        None
+    } else {
+        Some(ctx)
+    }
+}
+
+/// Prepend retrieved memory as a leading system turn (no-op if nothing relevant).
+fn prepend_memory(m: &MemoryOpts, messages: Vec<ChatMsg>) -> Vec<ChatMsg> {
+    let Some(query) = messages
+        .iter()
+        .rev()
+        .find(|x| x.role == "user")
+        .map(|x| x.content.clone())
+    else {
+        return messages;
+    };
+    let n = m.n_results.unwrap_or(6).clamp(1, 20);
+    match retrieve_memory(&m.base, m.token.as_deref(), &query, n) {
+        Some(ctx) => {
+            let mut out = Vec::with_capacity(messages.len() + 1);
+            out.push(ChatMsg { role: "system".to_string(), content: ctx });
+            out.extend(messages);
+            out
+        }
+        None => messages,
+    }
 }
 
 /// Local ollama model via its streaming chat API (no CORS — this is server-side).

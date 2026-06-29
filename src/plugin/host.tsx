@@ -281,21 +281,12 @@ function has(manifest: PluginManifest, perm: Permission): boolean {
   return manifest.permissions.includes(perm);
 }
 
-/** Resolve a named backend base URL (config.ts). "atlas-api" → the dev/cloud base. */
+/** Resolve a named backend base URL from the config.ts registry (single source of
+ *  truth). `atlas-api` follows VITE_API_BASE (sidecar in dev, cloud in prod) via its
+ *  registry value; unknown names fall back to the configured base. Add new module
+ *  backends in config.ts BACKENDS — never here. */
 function backendBase(name: string): string {
-  // The shell's primary backend is atlas-api; named lookups map to the configured
-  // base. Additional named backends can be added here as they come online.
-  if (name === "atlas-api" || name === "local" || name === "cloud") {
-    return name === "local"
-      ? BACKENDS.local
-      : name === "cloud"
-        ? BACKENDS.cloud
-        : BACKEND_BASE_URL;
-  }
-  // u1-chat (chat.subunit.ai) — the shared chat/team backend, always the cloud
-  // service (never the VITE_API_BASE sidecar). Same Subunit bearer as atlas-api.
-  if (name === "u1-chat") return BACKENDS["u1-chat"];
-  return BACKEND_BASE_URL;
+  return (BACKENDS as Record<string, string>)[name] ?? BACKEND_BASE_URL;
 }
 
 function joinUrl(base: string, path: string): string {

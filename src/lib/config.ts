@@ -24,14 +24,44 @@ const CLOUD = "https://atlas-api.subunit.ai";
  */
 const U1_CHAT = "https://chat.subunit.ai";
 
+/**
+ * Additional named module backends (the desktop hosts more than atlas-api now).
+ * All Bearer-authed with the SAME Subunit token (auth.subunit.ai, audience
+ * "first-party"); each is reachable via host.backend.fetch("<name>", …) once the
+ * plugin declares the matching `backend:<name>` permission.
+ *   · sni-api        → the u1 nervous-system telemetry service (live GPU/cron/cost)
+ *   · transcribe-api → Echo's transcription / help backend
+ *   · memory-agent   → the local semantic memory API (ChromaDB/bge-m3); the same
+ *                      engine atlas-api wraps for /api/m/search. Local-only.
+ */
+const SNI = "https://sni.subunit.ai";
+const TRANSCRIBE = "https://transcribe.subunit.ai";
+const MEMORY_AGENT = "http://127.0.0.1:8001";
+
 export const BACKEND_BASE_URL: string =
   import.meta.env.VITE_API_BASE?.replace(/\/+$/, "") ?? LOCAL_DEV;
 
 /** True when we're pointed at the local dev sidecar (auth optional). */
 export const IS_LOCAL_DEV = BACKEND_BASE_URL === LOCAL_DEV;
 
-/** Convenience map for callers that want to show/switch the target. */
-export const BACKENDS = { local: LOCAL_DEV, cloud: CLOUD, "u1-chat": U1_CHAT } as const;
+/**
+ * The named-backend registry — the SINGLE SOURCE OF TRUTH for `backendBase()` in
+ * host.tsx. Add a module backend HERE (one line) instead of editing host routing.
+ * `atlas-api` intentionally follows VITE_API_BASE (sidecar in dev, cloud in prod);
+ * the rest are fixed services.
+ */
+export const BACKENDS = {
+  local: LOCAL_DEV,
+  cloud: CLOUD,
+  "atlas-api": BACKEND_BASE_URL,
+  "u1-chat": U1_CHAT,
+  "sni-api": SNI,
+  "transcribe-api": TRANSCRIBE,
+  "memory-agent": MEMORY_AGENT,
+} as const;
+
+/** A registered backend name. */
+export type BackendName = keyof typeof BACKENDS;
 
 /** Build a full API URL from a path (e.g. `api("/api/m/query")`). */
 export function api(path: string): string {

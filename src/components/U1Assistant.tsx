@@ -5,10 +5,13 @@
  * popover opens where you ask U1 about whatever you're doing — it knows which
  * page you're on and streams its answer inline.
  *
- * Backend: the REAL u1 — chat.subunit.ai (unitone-chat, `claude -p --resume`),
- * Bearer-authed with the Subunit token (the /api is NOT behind Cloudflare Access,
- * it just needs the bearer). One persistent thread continues across pages, so the
- * conversation has memory. The current page is passed as context on each turn.
+ * Backend (verified): U1 runs LOCALLY via the Tauri command `u1_ask` (assistant.rs)
+ * — either a local ollama model or Claude over the Max subscription (`claude -p`, no
+ * API key). It is NOT chat.subunit.ai and there is NO `--resume` yet, so there is no
+ * cross-page conversation persistence at this layer (continuity is a later stage).
+ * What it DOES have: optional RAG grounding — each turn pulls relevant chunks from
+ * the u1 long-term memory (atlas-api `/api/m/search`) so answers are grounded in our
+ * knowledge base. The current page is passed as context on each turn.
  *
  * Shell-level (not a plugin): lives in App.tsx, above the stage, so it's present
  * everywhere and reads the active page from the shell.
@@ -18,6 +21,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { isTauri } from "../lib/ipc";
+import { BACKEND_BASE_URL } from "../lib/config";
+import { getToken } from "../lib/auth";
 import { SubunitMark } from "./SubunitMark";
 import type { ClaudeSession, ProjectInfo } from "../plugin/types";
 
@@ -54,9 +59,43 @@ interface DeltaEvt { requestId: string; text: string }
 interface DoneEvt { requestId: string }
 interface ErrEvt { requestId: string; message: string }
 
+const HISTORY_KEY = "subunit.u1.history";
+const HISTORY_CAP = 40;
+
+/** Load the persisted orb conversation (local-lane continuity across restarts). */
+function loadHistory(): Msg[] {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    if (!raw) return [];
+    const arr: unknown = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+    return (arr as Msg[])
+      .filter(
+        (m) =>
+          m &&
+          (m.role === "user" || m.role === "u1") &&
+          typeof m.text === "string" &&
+          m.text.trim() !== ""
+      )
+      .slice(-HISTORY_CAP);
+  } catch {
+    return [];
+  }
+}
+
+/** Persist the orb conversation (drops empty/streaming-placeholder turns, capped). */
+function saveHistory(msgs: Msg[]): void {
+  try {
+    const keep = msgs.filter((m) => m.text.trim() !== "").slice(-HISTORY_CAP);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(keep));
+  } catch {
+    /* storage unavailable / quota */
+  }
+}
+
 export function U1Assistant({ pageName }: { pageName: string }) {
   const [open, setOpen] = useState(false);
-  const [msgs, setMsgs] = useState<Msg[]>([]);
+  const [msgs, setMsgs] = useState<Msg[]>(loadHistory);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -81,11 +120,26 @@ export function U1Assistant({ pageName }: { pageName: string }) {
   useEffect(() => {
     msgsRef.current = msgs;
   }, [msgs]);
+  // Persist the orb conversation so it survives app restarts (local-lane continuity).
+  useEffect(() => {
+    saveHistory(msgs);
+  }, [msgs]);
 
   const pickProvider = useCallback((p: Provider) => {
     setProvider(p);
     try {
       localStorage.setItem(PROVIDER_KEY, p);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // Start a fresh conversation (clears persisted local-lane history).
+  const clearConversation = useCallback(() => {
+    setMsgs([]);
+    setErr(null);
+    try {
+      localStorage.removeItem(HISTORY_KEY);
     } catch {
       /* ignore */
     }
@@ -232,8 +286,17 @@ export function U1Assistant({ pageName }: { pageName: string }) {
       lastActivityRef.current = Date.now();
       const conf = PROVIDERS.find((p) => p.id === provider) ?? PROVIDERS[0];
       try {
-        // Returns immediately; the answer streams back via the u1://* listener.
-        await invoke("u1_ask", { requestId: reqId, provider, model: conf.model, messages, cwd });
+        // Ground each turn in the u1 long-term memory (atlas-api), then ask. Returns
+        // immediately; the answer streams back via the u1://* listener.
+        const memToken = await getToken().catch(() => "");
+        await invoke("u1_ask", {
+          requestId: reqId,
+          provider,
+          model: conf.model,
+          messages,
+          cwd,
+          memory: { base: BACKEND_BASE_URL, token: memToken, nResults: 6 },
+        });
       } catch (e) {
         reqRef.current = null;
         setBusy(false);
@@ -302,6 +365,11 @@ export function U1Assistant({ pageName }: { pageName: string }) {
                 </button>
               ))}
             </div>
+            {msgs.length > 0 && (
+              <button className="u1a-x" onClick={clearConversation} title="Gespräch löschen" aria-label="Gespräch löschen">
+                <svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" /></svg>
+              </button>
+            )}
             <button className="u1a-x" onClick={() => setOpen(false)} aria-label="Schließen">
               <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12" /></svg>
             </button>

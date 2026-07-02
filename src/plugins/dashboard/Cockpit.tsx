@@ -70,7 +70,6 @@ const STATUS_ORDER: Record<TStatus, number> = { waiting: 0, working: 1, idle: 2,
 type StatusFilter = "all" | "waiting" | "working" | "quiet";
 
 const MODE_KEY = "subunit.cockpit.modes";
-const MASTER_KEY = "subunit.cockpit.autonom";
 const FLAG_KEY = "subunit.cockpit.flags";
 const PREF_KEY = "subunit.cockpit.prefs";
 
@@ -134,13 +133,10 @@ export function Cockpit({
   const [flags, setFlags] = useState<Record<string, Flag>>(() => loadJSON(FLAG_KEY, {}));
   const [prefs, setPrefs] = useState<Prefs>(() => ({ ...DEFAULT_PREFS, ...loadJSON(PREF_KEY, {}) }));
   const [query, setQuery] = useState("");
-  const [master, setMaster] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem(MASTER_KEY) === "1";
-    } catch {
-      return false;
-    }
-  });
+  // Autonom master is a SAFETY switch for real terminal control: it always cold-starts
+  // OFF (never auto-reactivated from storage on launch) and requires an explicit confirm
+  // to enable — see toggleMaster.
+  const [master, setMaster] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [flagOpen, setFlagOpen] = useState<string | null>(null);
   const [transcripts, setTranscripts] = useState<Record<string, SessionTurn[]>>({});
@@ -170,17 +166,22 @@ export function Cockpit({
     });
     setFlagOpen(null);
   }, []);
+  // How many sessions U1 would actually drive when the master is on.
+  const autoCount = useMemo(
+    () => sessions.filter((s) => (modes[s.id] || "manual") === "auto").length,
+    [sessions, modes]
+  );
   const toggleMaster = useCallback(() => {
-    setMaster((v) => {
-      const n = !v;
-      try {
-        localStorage.setItem(MASTER_KEY, n ? "1" : "0");
-      } catch {
-        /* ignore */
-      }
-      return n;
-    });
-  }, []);
+    if (master) {
+      setMaster(false); // turning OFF is always immediate (the safe direction)
+      return;
+    }
+    // Turning ON: confirm, because U1 will now send REAL prompts into live terminals.
+    const ok = window.confirm(
+      `Autonom global aktivieren?\n\nU1 (Opus) schreibt und sendet ab jetzt SELBST den nächsten Prompt in ${autoCount} auf „Autonom" gestellte Session${autoCount === 1 ? "" : "s"} — direkt in die echten Terminals, sobald sie auf dich warten.\n\nGedeckelt (Cooldown 25 s · max 4× in Folge · STOP-aware), jederzeit hier wieder abschaltbar. Beim App-Neustart ist Autonom immer wieder aus.`
+    );
+    if (ok) setMaster(true);
+  }, [master, autoCount]);
   const toggleExpand = useCallback((id: string) => {
     setExpanded((prev) => {
       const n = new Set(prev);
@@ -427,9 +428,13 @@ export function Cockpit({
           <button
             className={`cb-master${master ? " on" : ""}`}
             onClick={toggleMaster}
-            title="Globaler Schalter: lässt Autonom-Sessions selbst weiterarbeiten"
+            title={
+              master
+                ? `Autonom AN — U1 treibt ${autoCount} Session${autoCount === 1 ? "" : "s"} selbst. Klick zum Abschalten.`
+                : "Globaler Schalter: lässt Autonom-Sessions selbst weiterarbeiten (fragt vor dem Aktivieren nach)"
+            }
           >
-            <span className="cb-master-dot" /> Autonom {master ? "AN" : "aus"}
+            <span className="cb-master-dot" /> Autonom {master ? `AN${autoCount ? ` · ${autoCount}` : ""}` : "aus"}
           </button>
           {sessions.length > 0 && (
             <button className="cb-c1" onClick={onC1} title="C1: Cloud-Orchestrator über alle Sessions">

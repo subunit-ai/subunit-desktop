@@ -75,13 +75,18 @@ export function C1Panel({
   const [err, setErr] = useState<string | null>(null);
   const [result, setResult] = useState<C1Result | null>(null);
   const [raw, setRaw] = useState<string | null>(null);
-  const [sent, setSent] = useState<Record<string, "sending" | "ok" | "err">>({});
+  const [sent, setSent] = useState<Record<string, "sending" | "ok" | "err" | "skipped">>({});
   const [auto, setAuto] = useState<number | null>(null);
   const reqRef = useRef<string | null>(null);
   const accRef = useRef("");
   const modeRef = useRef(mode);
   modeRef.current = mode;
   const autoTimer = useRef<number | null>(null);
+  // Always-fresh view of the sessions for the autonomous path: the 5 s grace lets a
+  // session flip working→waiting→working again, so we must re-check status/tty at the
+  // MOMENT of sending — never against the render-time snapshot the countdown captured.
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
 
   const byId = useMemo(() => {
     const m = new Map<string, ClaudeSession>();
@@ -98,10 +103,17 @@ export function C1Panel({
     }
   };
 
-  const send = async (it: C1Item) => {
-    const s = byId.get(it.id);
+  const send = async (it: C1Item, opts?: { auto?: boolean }) => {
+    // Resolve the session from the LIVE list (not the countdown's stale snapshot).
+    const s = sessionsRef.current.find((x) => x.id === it.id) ?? byId.get(it.id);
     const text = (it.suggestion || "").trim();
     if (!s?.tty || !text) return;
+    // Autonomous send: refuse if the session is no longer waiting for input — C1 must
+    // never type into a session that resumed working during the grace period.
+    if (opts?.auto && s.status !== "waiting") {
+      setSent((p) => ({ ...p, [it.id]: "skipped" }));
+      return;
+    }
     setSent((p) => ({ ...p, [it.id]: "sending" }));
     try {
       await host.terminals.sendToTerminal(s.tty, text);
@@ -127,7 +139,7 @@ export function C1Panel({
       setAuto(n);
       if (n <= 0) {
         cancelAuto();
-        items.forEach((it) => void send(it));
+        items.forEach((it) => void send(it, { auto: true }));
       }
     }, 1000);
   };
@@ -283,7 +295,7 @@ export function C1Panel({
                                 title={s.tty ? "In das echte Terminal senden" : "Session hat kein offenes Terminal"}
                                 onClick={() => void send(it)}
                               >
-                                {st === "ok" ? "✓ gesendet" : st === "sending" ? "…" : st === "err" ? "Fehler – nochmal" : s.tty ? "Senden ↵" : "kein Terminal"}
+                                {st === "ok" ? "✓ gesendet" : st === "sending" ? "…" : st === "err" ? "Fehler – nochmal" : st === "skipped" ? "arbeitet – manuell senden ↵" : s.tty ? "Senden ↵" : "kein Terminal"}
                               </button>
                             )}
                           </div>

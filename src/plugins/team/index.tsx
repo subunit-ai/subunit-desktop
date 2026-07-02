@@ -1,6 +1,12 @@
 /**
  * Team — the team-chat surface (Telegram-style), wired to the REAL u1-chat backend.
  *
+ * ⚠️ ABSORBED by the Chat plugin (Subunit Messenger, 2026-07-02): the unified
+ * chat rail now carries team convos WITH the full parity set (media, reactions,
+ * reply, edit/delete, read receipts, typing, pins, group management). This
+ * surface stays registered but `nav.section: "hidden"` keeps it out of the dock
+ * (still reachable via ⌘K "Team" as a fallback).
+ *
  * Chat with the workspace: DMs + group conversations over chat.subunit.ai
  * (`/api/team/*`), the SAME backend as subunit-ios. A left rail lists conversations
  * (with presence + unread), the right column is the live conversation with a glass
@@ -526,7 +532,7 @@ const plugin: PluginModule = {
     description: "Team-Chat — DMs & Gruppen mit dem Workspace, wie Telegram.",
     icon: ICON,
     permissions: ["backend:u1-chat", "storage", "notifications"],
-    nav: { section: "comms", order: 1 },
+    nav: { section: "hidden", order: 1 },
     commands: [{ id: "open", title: "Go to Team" }],
   },
   mount(container, host) {

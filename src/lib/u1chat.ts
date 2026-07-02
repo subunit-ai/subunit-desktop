@@ -36,16 +36,38 @@ export interface ThreadDTO {
   kind?: string; // "u1" | "bot" | "person"
 }
 
+/** An uploaded attachment reference (image | audio | file). */
+export interface AttachmentDTO {
+  id: string;
+  kind: string; // "image" | "audio" | "file"
+  name: string;
+  url?: string;
+  transcript?: string;
+  duration?: number; // seconds (voice messages)
+}
+
+/** One emoji reaction aggregate on a message. */
+export interface ReactionDTO {
+  emoji: string;
+  count: number;
+  mine: boolean;
+}
+
+/** The curated reaction set — mirrors the server whitelist + iOS. */
+export const REACTION_SET = ["👍", "🔥", "❤️", "✅", "👎", "🤔"] as const;
+
 export interface MessageDTO {
   id?: number;
   role: string; // "user" | "assistant" | "system"
   content: string;
   created_at?: number;
   cost?: number;
+  attachments?: AttachmentDTO[];
+  reactions?: ReactionDTO[];
   reply_to?: number;
   reply_sender?: string;
   reply_text?: string;
-  edited?: number;
+  edited?: number; // sqlite bool: 0/1
   deleted?: number;
 }
 
@@ -88,6 +110,8 @@ export interface TeamMessageDTO {
   sender: string; // email
   body: string;
   created_at?: number;
+  attachments?: AttachmentDTO[];
+  reactions?: ReactionDTO[];
   reply_to?: number;
   reply_sender?: string;
   reply_text?: string;
@@ -99,6 +123,34 @@ export interface MeDTO {
   email: string;
   op?: boolean | number;
   csrf?: string;
+}
+
+// ── Bots (persistent tmux-bot rooms, account-scoped by server-side ACL) ──
+
+/** A bot the signed-in account may talk to (roster is filtered server-side). */
+export interface BotDTO {
+  id: string; // "u1-private" | "u1-group" | "u1-erik" | "u1-dirk"
+  name: string;
+  online?: boolean;
+  members?: string[]; // room members (ACL emails)
+  last_text?: string | null;
+  last_ts?: number | null; // ms epoch
+  last_role?: string | null; // "user" | "bot" — client-side unread/notify
+  last_sender?: string | null; // email of the last human sender ("" for bot)
+}
+
+/** One message in a bot room. Rooms are SHARED: every member sees everything. */
+export interface BotMessageDTO {
+  id: number;
+  role: string; // "user" | "bot"
+  sender: string; // email of the human sender, "" for the bot
+  sender_name?: string;
+  body: string;
+  created_at?: number;
+  reactions?: ReactionDTO[];
+  reply_to?: number;
+  reply_sender?: string;
+  reply_text?: string;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -161,6 +213,7 @@ export interface ThreadSendBody {
   model?: string;
   effort?: string;
   reply_to?: number;
+  attachment_ids?: string[];
 }
 
 /** POST a message and stream the assistant reply: delta|meta|done|error|ratelimit. */
@@ -211,15 +264,25 @@ export const createConvo = (
   payload: { email: string } | { title: string; members: string[] }
 ) => sendJSON<TeamConvoDTO>(host, "POST", "/api/team/convos", payload);
 
+/** Attachment descriptor sent alongside a team message (ids from uploadFile). */
+export interface SendAttachment {
+  id: string;
+  kind: string;
+  name: string;
+  duration?: number;
+}
+
 export const sendTeamMessage = (
   host: HostApi,
   convoId: string,
   body: string,
-  replyTo?: number
+  replyTo?: number,
+  attachments?: SendAttachment[]
 ) =>
   sendJSON<TeamMessageDTO>(host, "POST", `/api/team/convos/${convoId}/message`, {
     body,
     ...(replyTo ? { reply_to: replyTo } : {}),
+    ...(attachments && attachments.length ? { attachments } : {}),
   });
 
 export const setPresence = (host: HostApi, name: string) =>
@@ -242,10 +305,230 @@ export async function* streamConvo(
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// Team chat — Telegram-parity surface (reactions, reply, edit/delete, read,
+// typing, pins, group management). Wire shapes mirror the deployed waves.
+// ════════════════════════════════════════════════════════════════════════════
+
+export const reactTeamMessage = (
+  host: HostApi,
+  convoId: string,
+  msgId: number,
+  emoji: string
+) =>
+  sendJSON<{ reactions: ReactionDTO[] }>(
+    host,
+    "POST",
+    `/api/team/convos/${convoId}/messages/${msgId}/react`,
+    { emoji }
+  );
+
+export const editTeamMessage = (
+  host: HostApi,
+  convoId: string,
+  msgId: number,
+  body: string
+) =>
+  sendJSON<{ ok: boolean }>(
+    host,
+    "POST",
+    `/api/team/convos/${convoId}/messages/${msgId}/edit`,
+    { body }
+  );
+
+export const deleteTeamMessage = (host: HostApi, convoId: string, msgId: number) =>
+  sendJSON<{ ok: boolean }>(
+    host,
+    "POST",
+    `/api/team/convos/${convoId}/messages/${msgId}/delete`
+  );
+
+/** Mark everything up to `lastId` read (monotonic server-side). */
+export const markRead = (host: HostApi, convoId: string, lastId: number) =>
+  sendJSON<{ ok: boolean }>(host, "POST", `/api/team/convos/${convoId}/read`, {
+    last_id: lastId,
+  });
+
+/** Signal "I'm typing" (server broadcasts + rate-limits; throttle client-side). */
+export const sendTyping = (host: HostApi, convoId: string) =>
+  sendJSON<{ ok: boolean }>(host, "POST", `/api/team/convos/${convoId}/typing`);
+
+/** Pin a message (msgId = 0 unpins). */
+export const pinMessage = (host: HostApi, convoId: string, msgId: number) =>
+  sendJSON<{ ok: boolean }>(host, "POST", `/api/team/convos/${convoId}/pin`, {
+    msg_id: msgId,
+  });
+
+export const renameConvo = (host: HostApi, convoId: string, title: string) =>
+  sendJSON<{ ok: boolean }>(host, "POST", `/api/team/convos/${convoId}/rename`, {
+    title,
+  });
+
+export const addConvoMember = (host: HostApi, convoId: string, email: string) =>
+  sendJSON<{ ok: boolean }>(host, "POST", `/api/team/convos/${convoId}/members/add`, {
+    email,
+  });
+
+export const leaveConvo = (host: HostApi, convoId: string) =>
+  sendJSON<{ ok: boolean }>(host, "POST", `/api/team/convos/${convoId}/leave`);
+
+// ════════════════════════════════════════════════════════════════════════════
+// KI-thread parity (reactions + edit/delete own turns)
+// ════════════════════════════════════════════════════════════════════════════
+
+export const reactThreadMessage = (
+  host: HostApi,
+  threadId: string,
+  msgId: number,
+  emoji: string
+) =>
+  sendJSON<{ reactions: ReactionDTO[] }>(
+    host,
+    "POST",
+    `/api/threads/${threadId}/messages/${msgId}/react`,
+    { emoji }
+  );
+
+export const editThreadMessage = (
+  host: HostApi,
+  threadId: string,
+  msgId: number,
+  content: string
+) =>
+  sendJSON<{ ok: boolean }>(
+    host,
+    "POST",
+    `/api/threads/${threadId}/messages/${msgId}/edit`,
+    { content }
+  );
+
+export const deleteThreadMessage = (host: HostApi, threadId: string, msgId: number) =>
+  sendJSON<{ ok: boolean }>(
+    host,
+    "POST",
+    `/api/threads/${threadId}/messages/${msgId}/delete`
+  );
+
+// ════════════════════════════════════════════════════════════════════════════
+// Bots — persistent tmux-bot rooms (TJ-Bot, Gruppe, Erik, Dirk), server-side
+// account ACL. Shared-room semantics: all members read/write the same line.
+// ════════════════════════════════════════════════════════════════════════════
+
+export const listBots = (host: HostApi) => getJSON<BotDTO[]>(host, "/api/bots");
+
+export const getBot = (host: HostApi, id: string) =>
+  getJSON<{ bot: BotDTO; messages: BotMessageDTO[] }>(host, `/api/bots/${id}`);
+
+/** Send a message into a bot room; the reply arrives on the SSE stream. */
+export const sendBotMessage = (
+  host: HostApi,
+  botId: string,
+  body: string,
+  replyTo?: number
+) =>
+  sendJSON<BotMessageDTO>(host, "POST", `/api/bots/${botId}/message`, {
+    body,
+    ...(replyTo ? { reply_to: replyTo } : {}),
+  });
+
+/** Live bot-room stream from ?since=<lastId>: message|error. */
+export async function* streamBot(
+  host: HostApi,
+  botId: string,
+  since: number,
+  signal?: AbortSignal
+): AsyncIterable<SseEvent> {
+  const res = await host.backend.fetch(B, `/api/bots/${botId}/stream?since=${since}`, {
+    headers: { Accept: "text/event-stream" },
+    signal,
+  });
+  if (!res.ok) throw new Error(await errMessage(res));
+  yield* readSSE(res);
+}
+
+export const reactBotMessage = (
+  host: HostApi,
+  botId: string,
+  msgId: number,
+  emoji: string
+) =>
+  sendJSON<{ reactions: ReactionDTO[] }>(
+    host,
+    "POST",
+    `/api/bots/${botId}/messages/${msgId}/react`,
+    { emoji }
+  );
+
+// ════════════════════════════════════════════════════════════════════════════
+// Uploads + protected media
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Upload one file (multipart `kind` + `file`) → `{id, kind, name}`. Max 25 MB. */
+export async function uploadFile(
+  host: HostApi,
+  file: File | Blob,
+  kind: string,
+  name: string
+): Promise<{ id: string; kind: string; name: string }> {
+  const form = new FormData();
+  form.append("kind", kind);
+  form.append("file", file, name);
+  const res = await host.backend.fetch(B, "/api/uploads", {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) throw new Error(await errMessage(res));
+  return (await res.json()) as { id: string; kind: string; name: string };
+}
+
+/**
+ * Fetch protected media bytes (`/api/media/:id`, owner or convo member) and hand
+ * back an object URL. Cached per id for the app's lifetime — media is immutable.
+ */
+const mediaUrlCache = new Map<string, Promise<string>>();
+export function mediaObjectUrl(host: HostApi, id: string): Promise<string> {
+  let p = mediaUrlCache.get(id);
+  if (!p) {
+    p = (async () => {
+      const res = await host.backend.fetch(B, `/api/media/${id}`);
+      if (!res.ok) throw new Error(await errMessage(res));
+      return URL.createObjectURL(await res.blob());
+    })();
+    // A failed fetch must not poison the cache — retry on next request.
+    p.catch(() => mediaUrlCache.delete(id));
+    mediaUrlCache.set(id, p);
+  }
+  return p;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // Identity
 // ════════════════════════════════════════════════════════════════════════════
 
 export const getMe = (host: HostApi) => getJSON<MeDTO>(host, "/api/me");
+
+// ── Cockpit → Chat seed hand-off ──
+// host.events isn't sticky: the dashboard emits `chat:seed` and THEN navigates,
+// so the chat plugin (mounted by that navigate) isn't subscribed yet and the
+// event is lost. This module-level mailbox bridges the gap — the dashboard drops
+// the payload here, the chat plugin drains it on mount. Both import this module,
+// so they share the one instance.
+export interface ChatSeed {
+  taskId?: string;
+  title?: string;
+  status?: string;
+  url?: string;
+}
+let pendingSeed: ChatSeed | null = null;
+export const chatSeedMailbox = {
+  put(seed: ChatSeed) {
+    pendingSeed = seed;
+  },
+  take(): ChatSeed | null {
+    const s = pendingSeed;
+    pendingSeed = null;
+    return s;
+  },
+};
 
 /** True online if a team user's last_seen is within the last minute. */
 export const isOnline = (lastSeen?: number): boolean =>

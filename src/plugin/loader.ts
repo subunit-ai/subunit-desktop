@@ -147,7 +147,7 @@ export class PluginLoader {
 
   /** All registered plugins, sorted by section then order then name. */
   list(): RegisteredPlugin[] {
-    const sectionRank = { core: 0, ops: 1, comms: 2 } as const;
+    const sectionRank: Record<string, number> = { core: 0, ops: 1, comms: 2 };
     return [...this.registry.values()].sort((a, b) => {
       const sa = sectionRank[a.manifest.nav.section] ?? 9;
       const sb = sectionRank[b.manifest.nav.section] ?? 9;

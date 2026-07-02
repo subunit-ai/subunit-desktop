@@ -28,7 +28,7 @@ import type {
   ProjectInfo,
   TermInfo,
 } from "../../plugin/types";
-import { listTasks, toggleTask, type TaskDTO } from "../../lib/u1chat";
+import { chatSeedMailbox, listTasks, toggleTask, type TaskDTO } from "../../lib/u1chat";
 import { C1Panel } from "./C1";
 import { Cockpit } from "./Cockpit";
 
@@ -872,10 +872,11 @@ function DashboardView({ host }: { host: HostApi }) {
   // ── Row actions ──
   const onChat = useCallback(
     (t: TaskDTO) => {
-      host.events.emit(CHAT_SEED_TOPIC, {
-        taskId: t.id,
-        title: t.title,
-      });
+      const seed = { taskId: t.id, title: t.title };
+      // Stash for the not-yet-mounted chat plugin (drained on its mount), AND
+      // emit live for the case where chat is already the open surface.
+      chatSeedMailbox.put(seed);
+      host.events.emit(CHAT_SEED_TOPIC, seed);
       host.nav.navigate("chat");
     },
     [host]

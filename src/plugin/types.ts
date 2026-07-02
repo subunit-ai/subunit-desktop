@@ -32,8 +32,12 @@
 
 /** Where a plugin lives in the left dock, and how it's ordered within a group. */
 export interface PluginNav {
-  /** Dock group. "core" = primary surfaces, "ops" = tooling, "comms" = talk. */
-  section: "core" | "ops" | "comms";
+  /**
+   * Dock group. "core" = primary surfaces, "ops" = tooling, "comms" = talk.
+   * "hidden" keeps the plugin registered (mountable via nav/⌘K) without a dock
+   * entry — for surfaces another plugin has absorbed.
+   */
+  section: "core" | "ops" | "comms" | "hidden";
   /** Sort order within the section (ascending). */
   order: number;
 }

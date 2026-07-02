@@ -1,79 +1,59 @@
 /**
- * Chat — the KI-chat surface (claude.ai-style), wired to the REAL u1-chat backend.
+ * Chat — the Subunit Messenger: the desktop's Telegram replacement.
  *
- * A native Subunit Liquid Glass chat: a left thread rail and a right conversation
- * column with a glass composer. Threads + messages are PERSISTENT and live on
- * chat.subunit.ai (`/api/threads/*`) — the SAME backend as the subunit-ios app, so
- * a conversation started on the phone continues here and vice-versa. Each thread is
- * a Claude Code session resumed server-side (`claude -p --resume`); replies STREAM
- * over SSE (delta|meta|done|error|ratelimit).
+ * ONE unified conversation rail over three lanes of the u1-chat backend
+ * (chat.subunit.ai — the SAME service subunit-ios uses):
  *
- * This is the cloud lane. The ubiquitous U1 orb (⌘J, lib/components/U1Assistant)
- * stays the LOCAL lane (claude -p / ollama with file + terminal access) — the two
- * are complementary.
+ *   · Bots  (`/api/bots/*`)   — the persistent tmux bots (TJ-Bot, u1 · Gruppe,
+ *     Erik, Dirk), account-scoped server-side: the roster only contains the bots
+ *     the signed-in account may see. Bot rooms are SHARED — in the group room
+ *     TJ + Erik both see everything, like the Telegram group.
+ *   · Team  (`/api/team/*`)   — human↔human DMs + groups with full Telegram
+ *     parity: media/voice, reactions, reply, edit/delete, read receipts,
+ *     typing, pins, group management.
+ *   · KI    (`/api/threads/*`)— claude.ai-style u1 threads (op-only), streamed
+ *     over SSE, synced with the iPhone.
  *
- * It also LISTENS for the cockpit's `chat:seed` event: navigating here from a task
- * pre-fills the composer (and opens a fresh thread if none is active).
+ * The rail merges all three, sorted by activity, with search, filter chips,
+ * unread badges and desktop notifications. Team unread is server-side
+ * (read-state); bot unread is tracked client-side (host.storage).
  *
- * Permissions: backend:u1-chat (threads API), storage (last-active + model),
- * notifications.
+ * Cockpit interop: listens for `chat:seed` (prefills the KI composer) and the
+ * palette commands `command:chat:open` / `command:chat:new`.
+ *
+ * Permissions: backend:u1-chat, storage, notifications.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { HostApi, PluginModule } from "../../plugin/types";
 import {
+  chatSeedMailbox,
+  createConvo,
   createThread,
-  getThread,
+  getMe,
+  isOnline,
+  listBots,
+  listConvos,
+  listTeamUsers,
   listThreads,
-  streamThreadMessage,
-  type MessageDTO,
+  setPresence,
+  type BotDTO,
+  type TeamConvoDTO,
+  type TeamUserDTO,
   type ThreadDTO,
 } from "../../lib/u1chat";
+import { authHint, ICONS, initialOf, nameOf, relTime, Svg } from "./convo";
+import { BotConvoView, KiThreadView, TeamConvoView } from "./lanes";
+import { MessengerStyle } from "./style";
 
 const ICON = `<svg viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-12 7.6L3 21l1.9-5.8A8.4 8.4 0 1 1 21 11.5Z"/></svg>`;
 
-const Svg = (props: { d: string }) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={1.8}
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    {props.d.split("|").map((p, i) => (
-      <path key={i} d={p} />
-    ))}
-  </svg>
-);
-
-const ORB = "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z|12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z";
-const ICONS = {
-  send: "M22 2 11 13|22 2l-7 20-4-9-9-4 20-7Z",
-  plus: "M12 5v14M5 12h14",
-};
-
-const STORE_ACTIVE = "activeThread";
+const STORE_ACTIVE = "activeItem";
 const STORE_MODEL = "model";
-const MODELS: { id: string; label: string }[] = [
-  { id: "opus", label: "Opus" },
-  { id: "sonnet", label: "Sonnet" },
-];
+const STORE_BOTREAD = "botRead";
 
-/** A message in the local view: server MessageDTO + a transient streaming flag. */
-interface ViewMsg extends MessageDTO {
-  streaming?: boolean;
-}
-
-function relTime(ts?: number): string {
-  if (!ts) return "";
-  const s = Math.round((Date.now() - ts) / 1000);
-  if (s < 60) return "gerade eben";
-  if (s < 3600) return `${Math.floor(s / 60)} min`;
-  if (s < 86400) return `${Math.floor(s / 3600)} h`;
-  return `${Math.floor(s / 86400)} d`;
-}
+type Filter = "all" | "bots" | "team" | "ki";
 
 interface SeedPayload {
   taskId?: string;
@@ -82,115 +62,230 @@ interface SeedPayload {
   url?: string;
 }
 
-function ChatView({ host }: { host: HostApi }) {
+function MessengerView({ host }: { host: HostApi }) {
+  const [bots, setBots] = useState<BotDTO[]>([]);
+  const [convos, setConvos] = useState<TeamConvoDTO[]>([]);
   const [threads, setThreads] = useState<ThreadDTO[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ViewMsg[]>([]);
-  const [draft, setDraft] = useState("");
-  const [loadingThreads, setLoadingThreads] = useState(true);
-  const [sending, setSending] = useState(false);
+  const [users, setUsers] = useState<TeamUserDTO[]>([]);
+  const [myEmail, setMyEmail] = useState("");
+  const [kiAllowed, setKiAllowed] = useState(false);
+  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const [filter, setFilter] = useState<Filter>("all");
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [model, setModel] = useState<string>("opus");
-  const bodyRef = useRef<HTMLDivElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
-  const mountedRef = useRef(true);
-  // Latest active thread id, addressable from async loops without re-subscribing.
-  const activeIdRef = useRef<string | null>(null);
-  activeIdRef.current = activeId;
+  const [model, setModel] = useState("opus");
+  const [botRead, setBotRead] = useState<Record<string, number>>({});
+  const [seed, setSeed] = useState<{ text: string; n: number } | null>(null);
+  const [newOpen, setNewOpen] = useState(false);
+  const [groupDlg, setGroupDlg] = useState(false);
+  const [groupTitle, setGroupTitle] = useState("");
+  const [groupSel, setGroupSel] = useState<Set<string>>(new Set());
 
-  // ── load thread list + restore the last active one ──
-  const refreshThreads = useCallback(async () => {
-    const list = await listThreads(host);
-    setThreads(list);
-    return list;
-  }, [host]);
+  const activeKeyRef = useRef<string | null>(null);
+  activeKeyRef.current = activeKey;
+  const myEmailRef = useRef("");
+  myEmailRef.current = myEmail;
+  // Per-item "last notified" watermark — dedupes poll- vs stream-triggered notes.
+  const notifiedRef = useRef<Map<string, number>>(new Map());
+  const bootstrappedRef = useRef(false);
+  const seedCounter = useRef(0);
 
+  // The SINGLE notification authority. Its per-key watermark (notifiedRef)
+  // dedupes the live SSE path and the 12s rail poll against each other, so an
+  // incoming message notifies exactly once regardless of which path saw it first.
+  const maybeNotify = useCallback(
+    (key: string, title: string, body: string, ts: number) => {
+      const seen = notifiedRef.current.get(key) ?? 0;
+      if (ts <= seen) return;
+      notifiedRef.current.set(key, ts);
+      if (!bootstrappedRef.current) return; // initial fill, not news
+      if (key === activeKeyRef.current && document.hasFocus()) return;
+      host.notifications.notify(title, body);
+    },
+    [host]
+  );
+
+  // ── data loading ──
+
+  const refreshAll = useCallback(async () => {
+    // Recover identity if the bootstrap getMe failed transiently — otherwise
+    // myEmail stays "" and own messages read as foreign (+ self-notifications).
+    if (!myEmailRef.current) {
+      try {
+        const me = await getMe(host);
+        myEmailRef.current = me.email;
+        setMyEmail(me.email);
+      } catch {
+        /* try again next poll */
+      }
+    }
+    const [botsR, convosR, threadsR] = await Promise.allSettled([
+      listBots(host),
+      listConvos(host),
+      listThreads(host),
+    ]);
+
+    const me = myEmailRef.current;
+    let anyOk = false;
+    if (botsR.status === "fulfilled") {
+      anyOk = true;
+      setBots(botsR.value);
+      for (const b of botsR.value) {
+        // Notify on any message not authored by me (bot reply: last_sender="").
+        if (b.last_ts && (b.last_sender ?? "") !== me) {
+          maybeNotify(`bot:${b.id}`, b.name, b.last_text || "Neue Nachricht", b.last_ts);
+        }
+      }
+    }
+    if (convosR.status === "fulfilled") {
+      anyOk = true;
+      setConvos(convosR.value);
+      for (const c of convosR.value) {
+        if (c.updated_at && c.last_sender && c.last_sender !== me) {
+          const title = c.kind === "group" ? c.title || "Gruppe" : c.other_name || nameOf(c.other || "");
+          maybeNotify(`team:${c.id}`, title, c.last_text || "Neue Nachricht", c.updated_at);
+        }
+      }
+    }
+    if (threadsR.status === "fulfilled") {
+      anyOk = true;
+      setKiAllowed(true);
+      setThreads((prev) => {
+        const ids = new Set(threadsR.value.map((t) => t.id));
+        const extra = prev.filter((t) => !ids.has(t.id));
+        return [...extra, ...threadsR.value];
+      });
+    } else if (/403|forbidden/i.test(String(threadsR.reason))) {
+      anyOk = true; // a clean 403 is a valid answer (non-op user), not a failure
+      setKiAllowed(false);
+    }
+    // Only arm notifications once a baseline actually loaded — otherwise a failed
+    // first refresh (offline start) would treat old messages as fresh news.
+    if (anyOk) bootstrappedRef.current = true;
+  }, [host, maybeNotify]);
+
+  // Bootstrap: identity → presence → data → restore state.
   useEffect(() => {
     let alive = true;
     void (async () => {
       try {
-        const savedModel = (await host.storage.get(STORE_MODEL)) as string | undefined;
-        if (savedModel && alive) setModel(savedModel);
-        const saved = (await host.storage.get(STORE_ACTIVE)) as string | undefined;
-        const list = await listThreads(host);
+        const me = await getMe(host);
         if (!alive) return;
-        // Merge: keep any locally-created thread (e.g. a seed that landed
-        // mid-bootstrap) the server list doesn't have yet — don't clobber it.
-        setThreads((prev) => {
-          const ids = new Set(list.map((t) => t.id));
-          const extra = prev.filter((t) => !ids.has(t.id));
-          return [...extra, ...list];
-        });
-        // Only pick a landing thread if a seed hasn't already set one.
-        if (!activeIdRef.current) {
-          setActiveId((saved && list.find((t) => t.id === saved)?.id) || list[0]?.id || null);
-        }
+        setMyEmail(me.email);
+        myEmailRef.current = me.email;
+        void setPresence(host, nameOf(me.email)).catch(() => {});
+        const [savedModel, savedActive, savedRead] = await Promise.all([
+          host.storage.get(STORE_MODEL),
+          host.storage.get(STORE_ACTIVE),
+          host.storage.get(STORE_BOTREAD),
+        ]);
+        if (!alive) return;
+        if (typeof savedModel === "string") setModel(savedModel);
+        if (savedRead && typeof savedRead === "object") setBotRead(savedRead as Record<string, number>);
+        await refreshAll();
+        if (!alive) return;
+        if (typeof savedActive === "string" && !activeKeyRef.current) setActiveKey(savedActive);
       } catch (e) {
         if (alive) setError(authHint(e));
       } finally {
-        if (alive) setLoadingThreads(false);
+        if (alive) setLoading(false);
       }
     })();
     return () => {
       alive = false;
     };
-  }, [host]);
+  }, [host, refreshAll]);
 
-  // ── load the active thread's messages ──
+  // Rail poll — previews, unread, presence, incoming-message notifications.
   useEffect(() => {
-    if (!activeId) {
-      setMessages([]);
-      return;
-    }
-    let alive = true;
-    void host.storage.set(STORE_ACTIVE, activeId);
-    void (async () => {
-      try {
-        const { messages: msgs } = await getThread(host, activeId);
-        if (alive) setMessages(msgs);
-      } catch (e) {
-        if (alive) setError(authHint(e));
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [host, activeId]);
+    const iv = window.setInterval(() => void refreshAll().catch(() => {}), 12000);
+    return () => window.clearInterval(iv);
+  }, [refreshAll]);
 
-  // Abort any in-flight stream on unmount + mark unmounted so the fire-and-forget
-  // send() loop doesn't setState on a torn-down component.
-  useEffect(
-    () => () => {
-      mountedRef.current = false;
-      abortRef.current?.abort();
+  useEffect(() => {
+    if (activeKey) void host.storage.set(STORE_ACTIVE, activeKey);
+  }, [host, activeKey]);
+
+  // ── cockpit seed + palette commands ──
+
+  const newKiThread = useCallback(async (): Promise<ThreadDTO | null> => {
+    try {
+      const t = await createThread(host, model);
+      setThreads((prev) => [t, ...prev]);
+      setActiveKey(`ki:${t.id}`);
+      return t;
+    } catch (e) {
+      setError(authHint(e));
+      return null;
+    }
+  }, [host, model]);
+
+  useEffect(() => {
+    const applySeed = (p: SeedPayload) => {
+      const title = p.title || "Aufgabe";
+      setSeed({ text: `Lass uns an dieser Aufgabe arbeiten: „${title}". `, n: ++seedCounter.current });
+      const key = activeKeyRef.current;
+      if (!key || !key.startsWith("ki:")) {
+        const existing = threads.find((t) => t.status !== "closed");
+        if (existing) setActiveKey(`ki:${existing.id}`);
+        else void newKiThread();
+      }
+    };
+    // Drain a seed the dashboard stashed before we were mounted (the live event
+    // fired before our subscription existed), then listen for future ones.
+    const stashed = chatSeedMailbox.take();
+    if (stashed) applySeed(stashed);
+    const offSeed = host.events.on("chat:seed", (data) => applySeed((data ?? {}) as SeedPayload));
+    const offNew = host.events.on("command:chat:new", () => setNewOpen(true));
+    return () => {
+      offSeed();
+      offNew();
+    };
+  }, [host, threads, newKiThread]);
+
+  // ── lane callbacks ──
+
+  const onBotActivity = useCallback(
+    (botId: string, lastTs: number, lastRole: string, lastText: string) => {
+      setBots((prev) =>
+        prev.map((b) =>
+          b.id === botId ? { ...b, last_ts: lastTs, last_role: lastRole, last_text: lastText } : b
+        )
+      );
+      // Viewing the room = read.
+      setBotRead((prev) => {
+        if ((prev[botId] ?? 0) >= lastTs) return prev;
+        const next = { ...prev, [botId]: lastTs };
+        void host.storage.set(STORE_BOTREAD, next);
+        return next;
+      });
+      notifiedRef.current.set(`bot:${botId}`, Math.max(notifiedRef.current.get(`bot:${botId}`) ?? 0, lastTs));
+    },
+    [host]
+  );
+
+  // Live incoming from an open lane → route through the ONE notify authority
+  // (watermark-deduped against the poll). No separate notify path.
+  const onIncoming = useCallback(
+    (key: string, title: string, body: string, ts: number) => {
+      maybeNotify(key, title, body, ts);
+    },
+    [maybeNotify]
+  );
+
+  const onLocalRead = useCallback((convoId: string) => {
+    setConvos((prev) => prev.map((c) => (c.id === convoId ? { ...c, unread: 0 } : c)));
+  }, []);
+
+  const onConvosChanged = useCallback(() => void refreshAll().catch(() => {}), [refreshAll]);
+
+  const onThreadMeta = useCallback(
+    (id: string, meta: { title?: string; color?: string; category?: string }) => {
+      setThreads((prev) => prev.map((t) => (t.id === id ? { ...t, ...meta } : t)));
     },
     []
   );
-
-  // ── react to the cockpit's "chat mit u1" seed ──
-  useEffect(() => {
-    return host.events.on("chat:seed", (data) => {
-      const p = (data ?? {}) as SeedPayload;
-      const title = p.title || "Aufgabe";
-      setDraft(`Lass uns an dieser Aufgabe arbeiten: „${title}". `);
-      // Ensure there's a thread to drop into; create one if the rail is empty.
-      if (!activeIdRef.current) {
-        void createThread(host, model)
-          .then((t) => {
-            setThreads((prev) => [t, ...prev]);
-            setActiveId(t.id);
-          })
-          .catch((e) => setError(authHint(e)));
-      }
-    });
-  }, [host, model]);
-
-  const active = threads.find((t) => t.id === activeId) ?? null;
-
-  useEffect(() => {
-    const el = bodyRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [messages]);
 
   const pickModel = useCallback(
     (m: string) => {
@@ -200,155 +295,280 @@ function ChatView({ host }: { host: HostApi }) {
     [host]
   );
 
-  const newThread = useCallback(async () => {
-    setError(null);
+  const startDM = useCallback(
+    async (email: string) => {
+      setNewOpen(false);
+      try {
+        const convo = await createConvo(host, { email });
+        setConvos((prev) => (prev.some((c) => c.id === convo.id) ? prev : [convo, ...prev]));
+        setActiveKey(`team:${convo.id}`);
+      } catch (e) {
+        setError(authHint(e));
+      }
+    },
+    [host]
+  );
+
+  const createGroup = useCallback(async () => {
+    const title = groupTitle.trim();
+    if (!title || groupSel.size === 0) return;
     try {
-      const t = await createThread(host, model);
-      setThreads((prev) => [t, ...prev]);
-      setActiveId(t.id);
-      setMessages([]);
-      setDraft("");
+      const convo = await createConvo(host, { title, members: [...groupSel] });
+      setGroupDlg(false);
+      setGroupTitle("");
+      setGroupSel(new Set());
+      setConvos((prev) => (prev.some((c) => c.id === convo.id) ? prev : [convo, ...prev]));
+      setActiveKey(`team:${convo.id}`);
     } catch (e) {
       setError(authHint(e));
     }
-  }, [host, model]);
+  }, [host, groupTitle, groupSel]);
 
-  const send = useCallback(async () => {
-    const text = draft.trim();
-    if (!text || sending) return;
-    setError(null);
+  // ── rail entries ──
 
-    // Resolve a target thread (create one if needed).
-    let threadId = activeId;
-    if (!threadId) {
-      try {
-        const t = await createThread(host, model);
-        threadId = t.id;
-        setThreads((prev) => [t, ...prev]);
-        setActiveId(t.id);
-      } catch (e) {
-        setError(authHint(e));
-        return;
-      }
-    }
+  interface Entry {
+    key: string;
+    kind: "bot" | "team" | "ki";
+    title: string;
+    preview: string;
+    ts: number;
+    unread: number;
+    unreadDot: boolean;
+    online?: boolean;
+    avatar: React.ReactNode;
+  }
 
-    setDraft("");
-    setSending(true);
-    // Optimistic: append the user turn + an empty streaming assistant turn.
-    setMessages((m) => [
-      ...m,
-      { role: "user", content: text, created_at: Date.now() },
-      { role: "assistant", content: "", streaming: true },
-    ]);
-
-    const appendDelta = (t: string) =>
-      setMessages((m) => {
-        const next = m.slice();
-        const last = next[next.length - 1];
-        if (last && last.role === "assistant") {
-          next[next.length - 1] = { ...last, content: last.content + t };
-        }
-        return next;
+  const entries = useMemo<Entry[]>(() => {
+    const out: Entry[] = [];
+    for (const b of bots) {
+      out.push({
+        key: `bot:${b.id}`,
+        kind: "bot",
+        title: b.name,
+        preview: b.last_text || "Telegram-Brücke",
+        ts: b.last_ts ?? 0,
+        unread: 0,
+        unreadDot: (b.last_ts ?? 0) > (botRead[b.id] ?? 0) && (b.last_sender ?? "") !== myEmail,
+        online: b.online,
+        avatar: (
+          <span className="msn-av bot">
+            <Svg d={ICONS.orb} />
+            <span className={`msn-presence${b.online ? "" : " off"}`} />
+          </span>
+        ),
       });
-
-    const ac = new AbortController();
-    abortRef.current = ac;
-    try {
-      for await (const evt of streamThreadMessage(
-        host,
-        threadId,
-        { content: text, model, effort: "high" },
-        ac.signal
-      )) {
-        if (evt.event === "delta") {
-          appendDelta((evt.data as { text?: string })?.text ?? "");
-        } else if (evt.event === "meta") {
-          const meta = evt.data as { title?: string; color?: string; category?: string };
-          if (meta.title) {
-            setThreads((prev) =>
-              prev.map((t) =>
-                t.id === threadId ? { ...t, title: meta.title!, color: meta.color, category: meta.category } : t
-              )
-            );
-          }
-        } else if (evt.event === "ratelimit") {
-          host.notifications.notify("Rate-Limit erreicht", "u1 wartet kurz — der Stream läuft weiter.");
-        } else if (evt.event === "error") {
-          const m = (evt.data as { message?: string })?.message || "Antwort fehlgeschlagen.";
-          setError(m);
-        } else if (evt.event === "done") {
-          const cost = (evt.data as { cost?: number })?.cost;
-          setMessages((m) => {
-            const next = m.slice();
-            const last = next[next.length - 1];
-            if (last && last.role === "assistant") next[next.length - 1] = { ...last, streaming: false, cost };
-            return next;
-          });
-        }
-      }
-    } catch (e) {
-      // Aborted streams are not errors.
-      if (mountedRef.current && !(e instanceof DOMException && e.name === "AbortError")) {
-        setError(authHint(e));
-      }
-    } finally {
-      if (abortRef.current === ac) abortRef.current = null;
-      if (mountedRef.current) {
-        setSending(false);
-        // Clear any lingering streaming flag + refresh rail (titles/order).
-        setMessages((m) =>
-          m.map((x) => (x.streaming ? { ...x, streaming: false } : x))
-        );
-        void refreshThreads().catch(() => {});
+    }
+    for (const c of convos) {
+      const isDM = c.kind === "dm";
+      const title = isDM ? c.other_name || nameOf(c.other || "") : c.title || "Gruppe";
+      const online = isDM && isOnline(c.other_seen);
+      out.push({
+        key: `team:${c.id}`,
+        kind: "team",
+        title,
+        preview: c.last_sender
+          ? `${c.last_sender === myEmail ? "Du" : nameOf(c.last_sender)}: ${c.last_text || ""}`
+          : c.last_text || "Noch keine Nachrichten",
+        ts: c.updated_at ?? 0,
+        unread: c.unread ?? 0,
+        unreadDot: false,
+        online,
+        avatar: (
+          <span className={`msn-av${isDM ? "" : " grp"}`}>
+            {isDM ? initialOf(title) : <Svg d={ICONS.group} />}
+            {isDM && <span className={`msn-presence${online ? "" : " off"}`} />}
+          </span>
+        ),
+      });
+    }
+    if (kiAllowed) {
+      for (const t of threads) {
+        if (t.status === "closed") continue;
+        out.push({
+          key: `ki:${t.id}`,
+          kind: "ki",
+          title: t.title || "u1 · KI",
+          preview: t.category || "KI-Strang",
+          ts: t.updated_at ?? 0,
+          unread: 0,
+          unreadDot: false,
+          avatar: (
+            <span className="msn-av ki">
+              <Svg d={ICONS.orb} />
+            </span>
+          ),
+        });
       }
     }
-  }, [activeId, draft, host, model, refreshThreads, sending]);
+    const q = query.trim().toLowerCase();
+    return out
+      .filter((e) => (filter === "all" ? true : filter === e.kind || (filter === "bots" && e.kind === "bot")))
+      .filter((e) => !q || e.title.toLowerCase().includes(q) || e.preview.toLowerCase().includes(q))
+      .sort((a, b) => b.ts - a.ts);
+  }, [bots, convos, threads, kiAllowed, botRead, myEmail, filter, query]);
 
-  const sorted = [...threads].sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0));
+  // ── active pane ──
+
+  const activeBot = activeKey?.startsWith("bot:") ? bots.find((b) => `bot:${b.id}` === activeKey) : undefined;
+  const activeConvo = activeKey?.startsWith("team:")
+    ? convos.find((c) => `team:${c.id}` === activeKey)
+    : undefined;
+  const activeThread = activeKey?.startsWith("ki:")
+    ? threads.find((t) => `ki:${t.id}` === activeKey && t.status !== "closed")
+    : undefined;
+
+  // A dangling active key (archived thread, left group) resolves to nothing →
+  // fall back to the blank pane instead of showing a stale conversation.
+  useEffect(() => {
+    if (activeKey && !activeBot && !activeConvo && !activeThread && !loading) {
+      setActiveKey(null);
+    }
+  }, [activeKey, activeBot, activeConvo, activeThread, loading]);
+
+  // If the KI lane becomes unavailable (non-op) while its filter is active,
+  // don't strand the rail on an empty, unselectable chip.
+  useEffect(() => {
+    if (filter === "ki" && !kiAllowed) setFilter("all");
+  }, [filter, kiAllowed]);
+
+  // Auto-dismiss the global error toast.
+  useEffect(() => {
+    if (!error || !activeKey) return;
+    const t = window.setTimeout(() => setError(null), 6000);
+    return () => window.clearTimeout(t);
+  }, [error, activeKey]);
+
+  const dmUsers = users.filter((u) => u.email !== myEmail);
+
+  // Load team users once the identity is known (for DM picker + group dialog).
+  useEffect(() => {
+    if (!myEmail) return;
+    let alive = true;
+    void listTeamUsers(host)
+      .then((u) => alive && setUsers(u))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [host, myEmail]);
+
+  const chips: { id: Filter; label: string }[] = [
+    { id: "all", label: "Alle" },
+    { id: "bots", label: "Bots" },
+    { id: "team", label: "Team" },
+    ...(kiAllowed ? [{ id: "ki" as Filter, label: "KI" }] : []),
+  ];
 
   return (
-    <div className="cht">
-      <ChatStyle />
+    <div className="msn">
+      <MessengerStyle />
 
-      {/* ── thread rail ── */}
-      <aside className="cht-rail">
-        <div className="cht-rail-head">
+      {/* ── rail ── */}
+      <aside className="msn-rail">
+        <div className="msn-rail-head">
           <div className="sect" style={{ margin: 0 }}>
-            Stränge
+            Chat
           </div>
-          <button className="iconbtn cht-new" title="Neuer Strang" onClick={() => void newThread()}>
-            <span className="ic">
-              <Svg d={ICONS.plus} />
-            </span>
-          </button>
+          <div className="msn-new-wrap">
+            <button className="iconbtn msn-new" title="Neue Unterhaltung" onClick={() => setNewOpen((o) => !o)}>
+              <span className="ic">
+                <Svg d={ICONS.plus} />
+              </span>
+            </button>
+            {newOpen && (
+              <div className="msn-menu" onMouseLeave={() => setNewOpen(false)}>
+                {kiAllowed && (
+                  <>
+                    <div className="msn-menu-h">u1</div>
+                    <button
+                      className="msn-menu-i"
+                      onClick={() => {
+                        setNewOpen(false);
+                        void newKiThread();
+                      }}
+                    >
+                      <Svg d={ICONS.orb} />
+                      <span className="n">Neuer KI-Strang</span>
+                    </button>
+                    <div className="msn-menu-sep" />
+                  </>
+                )}
+                <div className="msn-menu-h">Direktnachricht</div>
+                {dmUsers.length === 0 ? (
+                  <div className="msn-menu-empty">Keine weiteren Team-Mitglieder.</div>
+                ) : (
+                  dmUsers.map((u) => {
+                    const label = nameOf(u.email, u.name);
+                    return (
+                      <button key={u.email} className="msn-menu-i" onClick={() => void startDM(u.email)}>
+                        <span className="msn-av sm">
+                          {initialOf(label)}
+                          {isOnline(u.last_seen) && <span className="msn-presence" />}
+                        </span>
+                        <span className="n">{label}</span>
+                      </button>
+                    );
+                  })
+                )}
+                <div className="msn-menu-sep" />
+                <button
+                  className="msn-menu-i"
+                  onClick={() => {
+                    setNewOpen(false);
+                    setGroupDlg(true);
+                  }}
+                >
+                  <Svg d={ICONS.group} />
+                  <span className="n">Neue Gruppe…</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
-        {loadingThreads ? (
-          <div className="cht-rail-empty">
+        <div className="msn-search">
+          <Svg d={ICONS.search} />
+          <input placeholder="Suchen…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        </div>
+
+        <div className="msn-chips">
+          {chips.map((c) => (
+            <button
+              key={c.id}
+              className={`msn-chip${filter === c.id ? " on" : ""}`}
+              onClick={() => setFilter(c.id)}
+            >
+              {c.label}
+            </button>
+          ))}
+        </div>
+
+        {loading ? (
+          <div className="msn-rail-empty">
             <span className="spinner" />
           </div>
-        ) : sorted.length === 0 ? (
-          <div className="cht-rail-empty">
-            <span>Noch keine Unterhaltungen.</span>
-            <button className="btn-ghost minibtn" onClick={() => void newThread()}>
-              Strang starten
-            </button>
+        ) : entries.length === 0 ? (
+          <div className="msn-rail-empty">
+            <span>{query ? "Keine Treffer." : "Noch keine Unterhaltungen."}</span>
           </div>
         ) : (
-          <div className="cht-threads">
-            {sorted.map((t) => (
+          <div className="msn-items">
+            {entries.map((e) => (
               <button
-                key={t.id}
-                className={`cht-thread${t.id === activeId ? " is-active" : ""}`}
-                onClick={() => setActiveId(t.id)}
+                key={e.key}
+                className={`msn-item${e.key === activeKey ? " is-active" : ""}`}
+                onClick={() => setActiveKey(e.key)}
               >
-                <div className="cht-thread-top">
-                  <span className="cht-thread-title">{t.title || "Unterhaltung"}</span>
-                  <span className="cht-thread-time">{relTime(t.updated_at)}</span>
-                </div>
-                <div className="cht-thread-prev">
-                  {t.category ? t.category : t.status === "closed" ? "Archiviert" : "u1 · KI-Chat"}
-                </div>
+                {e.avatar}
+                <span className="msn-item-tx">
+                  <span className="msn-item-top">
+                    <span className="msn-item-title">{e.title}</span>
+                    <span className="msn-item-time">{relTime(e.ts)}</span>
+                  </span>
+                  <span className="msn-item-prev">{e.preview}</span>
+                </span>
+                {e.unread > 0 && <span className="msn-unread">{e.unread}</span>}
+                {e.unreadDot && <span className="msn-unread dot" />}
               </button>
             ))}
           </div>
@@ -356,174 +576,114 @@ function ChatView({ host }: { host: HostApi }) {
       </aside>
 
       {/* ── conversation ── */}
-      <section className="cht-conv">
-        <div className="cht-conv-head">
-          <span className="cht-orb">
-            <Svg d={ORB} />
-          </span>
-          <div className="cht-conv-tx">
-            <div className="cht-conv-title">{active?.title ?? "u1"}</div>
-            <div className="cht-conv-sub">Unit One · persistent &amp; synchron mit deinem iPhone</div>
-          </div>
-          <div className="cht-model" role="group" aria-label="Modell">
-            {MODELS.map((m) => (
-              <button
-                key={m.id}
-                className={`cht-model-b${model === m.id ? " on" : ""}`}
-                onClick={() => pickModel(m.id)}
-                title={`Neue Antworten mit ${m.label}`}
-              >
-                {m.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="cht-body" ref={bodyRef}>
-          {!active || messages.length === 0 ? (
-            <div className="cht-welcome">
-              <span className="cht-welcome-orb">
-                <Svg d={ORB} />
-              </span>
-              <b>Was bauen wir?</b>
-              <span className="hint center">
-                Schreib u1 direkt — Aufgaben, Debugging, Strategie. Die Threads sind
-                persistent und laufen auf deinem iPhone weiter. Aus dem Cockpit
-                gestartete Aufgaben landen hier im Composer.
-              </span>
-            </div>
-          ) : (
-            messages.map((m, i) => {
-              const who = m.role === "assistant" ? "u1" : "tj";
-              return (
-                <div key={m.id ?? `i${i}`} className={`cht-msg ${who}`}>
-                  {who === "u1" && (
-                    <span className="cht-msg-orb">
-                      <Svg d={ORB} />
-                    </span>
-                  )}
-                  <div className="cht-bubble">
-                    {m.content ||
-                      (m.streaming ? (
-                        <span className="cht-typing">
-                          <i />
-                          <i />
-                          <i />
-                        </span>
-                      ) : (
-                        ""
-                      ))}
-                  </div>
-                </div>
-              );
-            })
-          )}
-          {error && <div className="cht-err">{error}</div>}
-        </div>
-
-        <div className="cht-composer">
-          <textarea
-            className="fld cht-input"
-            placeholder="Nachricht an u1…"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void send();
-              }
-            }}
+      <section className="msn-conv">
+        {activeBot ? (
+          <BotConvoView
+            key={activeBot.id}
+            host={host}
+            bot={activeBot}
+            myEmail={myEmail}
+            onActivity={onBotActivity}
+            onIncoming={onIncoming}
           />
-          <button
-            className="btn btn-primary minibtn cht-send"
-            disabled={!draft.trim() || sending}
-            onClick={() => void send()}
-            title="Senden (Enter)"
-          >
-            {sending ? <span className="cht-spin" /> : <Svg d={ICONS.send} />}
-          </button>
-        </div>
+        ) : activeConvo ? (
+          <TeamConvoView
+            key={activeConvo.id}
+            host={host}
+            convo={activeConvo}
+            myEmail={myEmail}
+            users={users}
+            onConvosChanged={onConvosChanged}
+            onLocalRead={onLocalRead}
+            onIncoming={onIncoming}
+          />
+        ) : activeThread ? (
+          <KiThreadView
+            key={activeThread.id}
+            host={host}
+            thread={activeThread}
+            model={model}
+            onPickModel={pickModel}
+            seed={seed}
+            onThreadsChanged={onConvosChanged}
+            onThreadMeta={onThreadMeta}
+          />
+        ) : (
+          <div className="msn-conv-blank">
+            <span className="msn-blank-ic">
+              <Svg d={ICONS.orb} />
+            </span>
+            <b>Subunit Messenger</b>
+            <span className="hint center">
+              {error
+                ? error
+                : "Bots, Team und KI in einem Ort — wähle links eine Unterhaltung oder starte mit „＋“ eine neue."}
+            </span>
+          </div>
+        )}
       </section>
+
+      {/* Global error toast — errors from the "+" menu, group dialog and new-thread
+          are otherwise invisible while a conversation is open. Auto-dismisses. */}
+      {error && activeKey && (
+        <div className="msn-toast" role="alert" onClick={() => setError(null)}>
+          {error}
+        </div>
+      )}
+
+      {/* ── group dialog ── */}
+      {groupDlg && (
+        <div className="msn-overlay" onClick={() => setGroupDlg(false)}>
+          <div className="msn-dialog" onClick={(e) => e.stopPropagation()}>
+            <h3>Neue Gruppe</h3>
+            <input
+              className="fld"
+              placeholder="Gruppenname"
+              value={groupTitle}
+              autoFocus
+              onChange={(e) => setGroupTitle(e.target.value)}
+            />
+            <div className="msn-dlg-users">
+              {dmUsers.map((u) => {
+                const on = groupSel.has(u.email);
+                const label = nameOf(u.email, u.name);
+                return (
+                  <button
+                    key={u.email}
+                    className={`msn-dlg-u${on ? " on" : ""}`}
+                    onClick={() =>
+                      setGroupSel((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(u.email)) next.delete(u.email);
+                        else next.add(u.email);
+                        return next;
+                      })
+                    }
+                  >
+                    <span className="box">{on && <Svg d={ICONS.check} w={3} />}</span>
+                    <span className="msn-av sm">{initialOf(label)}</span>
+                    <span>{label}</span>
+                  </button>
+                );
+              })}
+              {dmUsers.length === 0 && <div className="msn-menu-empty">Keine weiteren Team-Mitglieder.</div>}
+            </div>
+            <div className="msn-dlg-foot">
+              <button className="btn btn-ghost minibtn" onClick={() => setGroupDlg(false)}>
+                Abbrechen
+              </button>
+              <button
+                className="btn btn-primary minibtn"
+                disabled={!groupTitle.trim() || groupSel.size === 0}
+                onClick={() => void createGroup()}
+              >
+                Gruppe erstellen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
-  );
-}
-
-/** Map a thrown backend error to a friendly hint (401 → sign in). */
-function authHint(e: unknown): string {
-  const msg = e instanceof Error ? e.message : String(e);
-  if (/401|unauthorized/i.test(msg))
-    return "Nicht angemeldet — melde dich oben rechts an, dann lädt der KI-Chat.";
-  return msg || "Etwas ist schiefgelaufen.";
-}
-
-function ChatStyle() {
-  return (
-    <style>{`
-.cht{display:grid;grid-template-columns:264px minmax(0,1fr);gap:16px;height:100%;padding:16px 18px 16px;max-width:1200px;margin:0 auto;width:100%}
-@media(max-width:820px){.cht{grid-template-columns:1fr}.cht-rail{display:none}}
-
-/* ── rail ── */
-.cht-rail{background:var(--glass);backdrop-filter:blur(34px) saturate(1.7);-webkit-backdrop-filter:blur(34px) saturate(1.7);border:1px solid var(--glass-edge);border-radius:var(--r);box-shadow:var(--shadow),inset 0 1px 0 var(--rim);padding:16px 14px;display:flex;flex-direction:column;min-height:0}
-.cht-rail-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
-.cht-new{width:auto}
-.cht-new .ic{width:32px;height:32px;border-radius:10px}
-.cht-new .ic svg{width:16px;height:16px}
-.cht-rail-empty{display:flex;flex-direction:column;align-items:center;gap:12px;color:var(--ink3);font-size:13px;text-align:center;padding:30px 8px;line-height:1.5}
-.cht-threads{display:flex;flex-direction:column;gap:6px;overflow-y:auto;min-height:0;flex:1}
-.cht-thread{text-align:left;width:100%;border:1px solid transparent;border-radius:var(--r-xs);background:transparent;padding:11px 12px;cursor:pointer;font-family:inherit;color:inherit;transition:background .16s,border-color .16s,transform .16s cubic-bezier(.2,.8,.2,1)}
-.cht-thread:hover{background:var(--glass2)}
-.cht-thread:active{transform:scale(.99)}
-.cht-thread.is-active{background:rgba(6,182,212,.1);border-color:rgba(6,182,212,.28);box-shadow:inset 0 1px 0 var(--rim)}
-.cht-thread-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
-.cht-thread-title{font-size:13.5px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}
-.cht-thread.is-active .cht-thread-title{color:var(--cyan-d)}
-.cht-thread-time{font-size:10.5px;color:var(--ink3);flex:none}
-.cht-thread-prev{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--ink3);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-
-/* ── conversation ── */
-.cht-conv{display:flex;flex-direction:column;min-height:0;background:var(--glass);backdrop-filter:blur(34px) saturate(1.7);-webkit-backdrop-filter:blur(34px) saturate(1.7);border:1px solid var(--glass-edge);border-radius:var(--r);box-shadow:var(--shadow),inset 0 1px 0 var(--rim);overflow:hidden}
-.cht-conv-head{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line)}
-.cht-orb,.cht-msg-orb,.cht-welcome-orb{display:grid;place-items:center;border-radius:50%;background:linear-gradient(160deg,rgba(6,182,212,.22),rgba(6,182,212,.06));color:var(--cyan-d);flex:none}
-.cht-orb{width:40px;height:40px}
-.cht-orb svg{width:21px;height:21px}
-.cht-conv-tx{min-width:0;flex:1}
-.cht-conv-title{font-size:15.5px;font-weight:600;letter-spacing:-.015em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.cht-conv-sub{font-size:12px;color:var(--ink2);margin-top:1px}
-.cht-model{flex:none;display:flex;gap:2px;padding:2px;border-radius:999px;background:var(--fill-weak);border:1px solid var(--line)}
-.cht-model-b{font:inherit;font-size:10.5px;font-weight:650;padding:4px 10px;border-radius:999px;border:none;background:none;color:var(--ink3);cursor:pointer;transition:.14s}
-.cht-model-b:hover{color:var(--ink)}
-.cht-model-b.on{background:linear-gradient(160deg,#22d3ee,#06b6d4);color:#fff;box-shadow:0 3px 9px -4px rgba(6,182,212,.7)}
-
-.cht-body{flex:1;overflow-y:auto;min-height:0;padding:22px 22px 8px;display:flex;flex-direction:column;gap:14px}
-.cht-welcome{margin:auto;text-align:center;display:flex;flex-direction:column;align-items:center;gap:12px;max-width:42ch;padding:30px 0}
-.cht-welcome-orb{width:58px;height:58px}
-.cht-welcome-orb svg{width:30px;height:30px}
-.cht-welcome b{font-size:18px;font-weight:600;letter-spacing:-.02em;color:var(--ink)}
-
-.cht-msg{display:flex;align-items:flex-end;gap:9px;max-width:78%}
-.cht-msg.tj{align-self:flex-end;flex-direction:row-reverse}
-.cht-msg.u1{align-self:flex-start}
-.cht-msg-orb{width:28px;height:28px}
-.cht-msg-orb svg{width:15px;height:15px}
-.cht-bubble{font-size:14.5px;line-height:1.55;padding:12px 15px;border-radius:18px;white-space:pre-wrap;word-break:break-word;box-shadow:var(--shadow-sm)}
-.cht-msg.u1 .cht-bubble{background:var(--fill-strong);border:1px solid var(--line);color:var(--prose);border-bottom-left-radius:6px}
-.cht-msg.tj .cht-bubble{background:linear-gradient(160deg,#22d3ee,#06b6d4);color:#fff;border-bottom-right-radius:6px;box-shadow:0 12px 26px -12px rgba(6,182,212,.5),inset 0 1px 0 var(--rim-cta)}
-
-.cht-typing{display:flex;align-items:center;gap:5px;padding:3px}
-.cht-typing i{width:7px;height:7px;border-radius:50%;background:var(--ink3);animation:cht-bounce 1.2s infinite ease-in-out}
-.cht-typing i:nth-child(2){animation-delay:.18s}
-.cht-typing i:nth-child(3){animation-delay:.36s}
-@keyframes cht-bounce{0%,60%,100%{transform:translateY(0);opacity:.4}30%{transform:translateY(-4px);opacity:1}}
-.cht-err{align-self:center;font-size:12px;color:#dc2626;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:10px;padding:9px 13px;line-height:1.4;text-align:center;max-width:48ch}
-
-.cht-composer{display:flex;align-items:flex-end;gap:10px;padding:14px 16px 16px;border-top:1px solid var(--line)}
-.cht-input{margin-top:0;min-height:48px;max-height:160px;resize:none;line-height:1.5;padding:13px 15px}
-.cht-send{width:auto;flex:none;padding:13px 15px}
-.cht-send svg{width:18px;height:18px}
-.cht-spin{width:16px;height:16px;border-radius:50%;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;animation:cht-rot .7s linear infinite;display:inline-block}
-@keyframes cht-rot{to{transform:rotate(360deg)}}
-@media (prefers-reduced-motion:reduce){.cht-typing i,.cht-spin{animation:none}}
-`}</style>
   );
 }
 
@@ -534,19 +694,20 @@ const plugin: PluginModule = {
   manifest: {
     id: "chat",
     name: "Chat",
-    version: "1.1.0",
-    description: "KI-Chat mit u1 — persistente Threads, synchron mit subunit-ios.",
+    version: "2.0.0",
+    description:
+      "Subunit Messenger — Bots (TJ/Gruppe/Erik/Dirk), Team-Chat und KI-Stränge in einem Ort. Der Telegram-Ersatz.",
     icon: ICON,
     permissions: ["backend:u1-chat", "storage", "notifications"],
     nav: { section: "comms", order: 0 },
     commands: [
       { id: "open", title: "Go to Chat" },
-      { id: "new", title: "Chat: new thread" },
+      { id: "new", title: "Chat: neue Unterhaltung" },
     ],
   },
   mount(container, host) {
     root = createRoot(container);
-    root.render(<ChatView host={host} />);
+    root.render(<MessengerView host={host} />);
     offCmd = host.events.on("command:chat:open", () => host.nav.navigate("chat"));
   },
   unmount() {

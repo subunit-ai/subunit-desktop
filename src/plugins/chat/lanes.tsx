@@ -854,9 +854,12 @@ export function KiThreadView(p: {
         ...m,
         {
           role: "user",
-          content: text || (atts.length ? `[${atts.map((a) => a.name).join(", ")}]` : ""),
+          content: text,
           created_at: Date.now(),
           ...(replyTo ? { reply_to: replyTo } : {}),
+          ...(atts.length
+            ? { attachments: atts.map((a) => ({ id: a.id, kind: a.kind as "image" | "audio" | "file", name: a.name })) }
+            : {}),
         },
         { role: "assistant", content: "", streaming: true },
       ]);
@@ -1025,6 +1028,7 @@ export function KiThreadView(p: {
                   deleted={!!m.deleted}
                   edited={!!m.edited}
                   streaming={m.streaming}
+                  attachments={m.attachments}
                   reactions={m.reactions}
                   replySender={m.reply_sender}
                   replyText={m.reply_text}

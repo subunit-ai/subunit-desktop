@@ -396,6 +396,9 @@ function SynapseView({ host }: { host: HostApi }) {
         if (res.ok) {
           setPending((ps) => ps.filter((x) => x.id !== p.id));
           void refreshDocs();
+        } else if (res.status === 409) {
+          // Job still indexing — leave the row and tell the operator to retry.
+          host.notifications.notify("Noch in Verarbeitung", "Quelle wird noch indexiert — gleich nochmal „Verwerfen“.");
         }
       } finally {
         mark(p.id, false);

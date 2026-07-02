@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data: blob: https:; media-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; script-src 'self'; frame-src 'self' https://chat.subunit.ai https://call.subunit.ai https://meet.subunit.ai; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:7850 ws://127.0.0.1:7850 https://atlas-api.subunit.ai wss://atlas-api.subunit.ai https://auth.subunit.ai https://meet.subunit.ai https://transcribe.subunit.ai wss://transcribe.subunit.ai https://chat.subunit.ai https://*.sentry.io"
+      "csp": "default-src 'self'; img-src 'self' data: blob: https:; media-src 'self' data: blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; script-src 'self'; frame-src 'self' https://chat.subunit.ai https://call.subunit.ai https://meet.subunit.ai; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:7850 ws://127.0.0.1:7850 https://atlas-api.subunit.ai wss://atlas-api.subunit.ai https://auth.subunit.ai https://meet.subunit.ai https://transcribe.subunit.ai wss://transcribe.subunit.ai https://chat.subunit.ai https://sni.subunit.ai wss://sni.subunit.ai https://*.sentry.io"
     }
   },
   "bundle": {

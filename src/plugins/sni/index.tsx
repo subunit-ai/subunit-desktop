@@ -625,7 +625,7 @@ function SNIShell({ host }: { host: HostApi }) {
         ))}
       </div>
       <div className="sni-body">
-        {tab === "home" && <HomeTab name={name} />}
+        {tab === "home" && <HomeTab name={name} host={host} />}
         {tab === "cortex" && <CortexTab host={host} />}
         {tab === "skills" && <SkillsTab host={host} />}
         {tab === "network" && <NetworkTab host={host} />}
@@ -673,7 +673,7 @@ const plugin: PluginModule = {
     version: "1.0.0",
     description: "Subunit Neural Interface — U1 und seine Skills.",
     icon: ICON,
-    permissions: ["storage", "backend:u1-chat"],
+    permissions: ["storage", "backend:u1-chat", "backend:sni-api"],
     nav: { section: "core", order: 1 },
     commands: [{ id: "open", title: "Go to SNI" }],
   },

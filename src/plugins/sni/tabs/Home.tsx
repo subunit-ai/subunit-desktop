@@ -10,6 +10,15 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AGENTS, LOG_TEMPLATES, TIER_CONFIG, orchestratorOf, skillsOf, type Tier } from "../agents";
+import type { HostApi } from "../../../plugin/types";
+import { sni, useSniResource, type SniGpu } from "../../../lib/sni";
+
+// Demo fallback for the GPU card until the sni-live server lever is pulled
+// (deploy/sni-live/). The real GPU is the server's GTX 1070 Ti.
+const MOCK_GPU: SniGpu = {
+  name: "GTX 1070 Ti", tempC: 54, utilization: 63,
+  memUsedMB: 5800, memTotalMB: 8192, powerDraw: 168, powerLimit: 180,
+};
 
 function greeting(h: number): string {
   if (h < 5) return "Gute Nacht";
@@ -20,7 +29,7 @@ function greeting(h: number): string {
 
 const TYPE_DOT: Record<string, string> = { info: "#38bdf8", success: "#34d399", warn: "#fbbf24" };
 
-export default function HomeTab({ name }: { name: string }) {
+export default function HomeTab({ name, host }: { name: string; host: HostApi }) {
   const u1 = useMemo(() => orchestratorOf(AGENTS), []);
   const stats = useMemo(() => {
     const skills = skillsOf(AGENTS);
@@ -60,8 +69,11 @@ export default function HomeTab({ name }: { name: string }) {
   const C = 2 * Math.PI * R;
   const off = C * (1 - stats.integrity / 100);
 
-  // Mock GPU/server health (real /api/gpu later).
-  const gpu = { vram: 71, temp: 54, power: 168, util: 63 };
+  // Live GPU telemetry (/api/gpu) with graceful demo fallback — swaps to live
+  // automatically once the sni-live server lever is pulled.
+  const gpuRes = useSniResource(host, sni.gpu, MOCK_GPU, { refreshMs: 5000 });
+  const g = gpuRes.data;
+  const vramPct = g.memTotalMB ? Math.round((g.memUsedMB / g.memTotalMB) * 100) : 0;
 
   return (
     <div className="sh">
@@ -116,14 +128,14 @@ export default function HomeTab({ name }: { name: string }) {
           </div>
         </div>
 
-        {/* Server / GPU health */}
+        {/* Server / GPU health — live /api/gpu, demo fallback */}
         <div className="sh-card">
-          <div className="sh-card-h"><span className="sh-card-t">Server &amp; GPU</span><span className="sh-badge ok">Nominal</span></div>
+          <div className="sh-card-h"><span className="sh-card-t">Server &amp; GPU</span><SourceBadge source={gpuRes.source} /></div>
           <div className="sh-gpu">
-            <Gauge label="VRAM" v={gpu.vram} unit="%" />
-            <Gauge label="GPU-Last" v={gpu.util} unit="%" />
-            <Gauge label="Temp" v={gpu.temp} unit="°C" max={90} />
-            <Gauge label="Power" v={gpu.power} unit="W" max={300} />
+            <Gauge label="VRAM" v={vramPct} unit="%" />
+            <Gauge label="GPU-Last" v={Math.round(g.utilization)} unit="%" />
+            <Gauge label="Temp" v={Math.round(g.tempC)} unit="°C" max={90} />
+            <Gauge label="Power" v={Math.round(g.powerDraw ?? 0)} unit="W" max={g.powerLimit ?? 300} />
           </div>
         </div>
 
@@ -143,6 +155,15 @@ export default function HomeTab({ name }: { name: string }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/** Live/Demo source indicator — green pulse when the SNI server answers, amber "Demo" on fallback. */
+function SourceBadge({ source }: { source: "live" | "demo" }) {
+  return source === "live" ? (
+    <span className="sh-live"><i />live</span>
+  ) : (
+    <span className="sh-badge demo" title="SNI-Server nicht erreichbar — Demo-Daten">Demo</span>
   );
 }
 
@@ -198,6 +219,7 @@ function HomeStyle() {
 @keyframes sh-beat{0%{box-shadow:0 0 0 0 rgba(52,211,153,.5)}100%{box-shadow:0 0 0 7px rgba(52,211,153,0)}}
 .sh-badge{font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:3px 8px;border-radius:7px}
 .sh-badge.ok{color:#0a9d63;background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.25)}
+.sh-badge.demo{color:#a16207;background:rgba(202,138,4,.12);border:1px solid rgba(202,138,4,.28);cursor:default}
 
 .sh-u1-body{display:flex;align-items:center;gap:14px;padding-bottom:14px;border-bottom:1px solid var(--line)}
 .sh-u1-orb{flex:none;width:54px;height:54px;border-radius:16px;display:grid;place-items:center;font-weight:800;font-size:17px;font-family:var(--mono,ui-monospace,monospace);color:#06202a;background:var(--c);background-image:linear-gradient(155deg,rgba(255,255,255,.4),rgba(0,0,0,.12));box-shadow:0 10px 24px -10px var(--c),inset 0 1px 0 rgba(255,255,255,.4)}

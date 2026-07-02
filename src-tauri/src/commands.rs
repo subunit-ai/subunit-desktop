@@ -131,7 +131,7 @@ pub fn open_external(url: String) {
 /// path cannot escape the home dir via a link or traversal. Confining to $HOME is
 /// where the DSGVO-local Atlas raw store lives (…/subunit/atlas/.devdata/raw/…),
 /// and keeps the shell from being driven to touch arbitrary system locations.
-fn safe_home_path(input: &str) -> Option<std::path::PathBuf> {
+pub(crate) fn safe_home_path(input: &str) -> Option<std::path::PathBuf> {
     if input.is_empty() {
         return None;
     }

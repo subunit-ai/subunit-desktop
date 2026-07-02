@@ -289,10 +289,13 @@ fn run_claude(app: &AppHandle, id: &str, model: &str, messages: &[ChatMsg], cwd:
     cmd.arg(&prompt);
     cmd.env("PATH", crate::terminal::child_path());
     // Run in the project the user attached as context (so claude can read its files),
-    // falling back to HOME.
+    // falling back to HOME. HOME-CONFINED: an unprivileged caller must never be able to
+    // spawn the agentic `claude` (which reads files) in an arbitrary system location, so
+    // only a canonical, existing directory UNDER $HOME is honored — safe_home_path()
+    // resolves symlinks/`..` and rejects anything outside home; everything else → HOME.
     let dir = cwd
-        .filter(|c| !c.is_empty() && std::path::Path::new(c).is_dir())
-        .map(std::path::PathBuf::from)
+        .and_then(crate::commands::safe_home_path)
+        .filter(|p| p.is_dir())
         .or_else(dirs::home_dir);
     if let Some(d) = dir {
         cmd.current_dir(d);

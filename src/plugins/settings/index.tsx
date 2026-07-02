@@ -34,6 +34,7 @@ import {
 import { createRoot, type Root } from "react-dom/client";
 import type { Account, HostApi, PluginModule } from "../../plugin/types";
 import { SubunitMark } from "../../components/SubunitMark";
+import { BACKENDS } from "../../lib/config";
 
 const ICON = `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`;
 
@@ -895,7 +896,7 @@ function NotificationsSection({ host }: { host: HostApi }) {
   const sendTest = useCallback(() => {
     host.notifications.notify(
       "Subunit Desktop",
-      "Test-Benachrichtigung — alles bereit. 🫡"
+      "Test-Benachrichtigung — die Zustellung funktioniert."
     );
     setSentAt(
       new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
@@ -968,108 +969,160 @@ function NotificationsSection({ host }: { host: HostApi }) {
 // 6) Verbindung
 // ════════════════════════════════════════════════════════════════════════
 
-type Reach = "checking" | "online" | "offline";
+// ── multi-backend health matrix: is EACH Subunit backend reachable from this Mac? ──
+type ProbeState = "checking" | "online" | "degraded" | "offline";
+
+interface Probe {
+  name: string;
+  url: string;
+  env: "local" | "cloud";
+  state: ProbeState;
+  code?: number;
+  ms?: number;
+}
+
+const isLocalUrl = (u: string) =>
+  /localhost|127\.0\.0\.1|0\.0\.0\.0|\.local(?::|\/|$)/.test(u);
+
+// The real module backends to probe — mirrors lib/config BACKENDS, minus the
+// local/cloud aliases (which just duplicate atlas-api's base).
+const PROBE_NAMES = Object.keys(BACKENDS).filter((n) => n !== "local" && n !== "cloud");
 
 function ConnectionSection({ host }: { host: HostApi }) {
-  const [reach, setReach] = useState<Reach>("checking");
+  const [probes, setProbes] = useState<Probe[]>(() =>
+    PROBE_NAMES.map((name) => {
+      let url = "";
+      try {
+        url = host.backend.baseUrl(name);
+      } catch {
+        url = "";
+      }
+      return { name, url, env: isLocalUrl(url) ? "local" : "cloud", state: "checking" as ProbeState };
+    })
+  );
   const [checkedAt, setCheckedAt] = useState("");
+  const [copied, setCopied] = useState(false);
   const alive = useRef(true);
 
-  const baseUrl = useMemo(() => {
-    try {
-      return host.backend.baseUrl("atlas-api");
-    } catch {
-      return "";
-    }
-  }, [host]);
-
-  const isLocal = /localhost|127\.0\.0\.1|0\.0\.0\.0|\.local(?::|\/|$)/.test(
-    baseUrl
+  // One probe: any HTTP answer means the service is UP (even a 404 for a missing
+  // /health route); a thrown fetch means unreachable (down / no network / CORS).
+  const probeOne = useCallback(
+    async (name: string): Promise<Partial<Probe>> => {
+      const t0 = Date.now();
+      try {
+        const res = await host.backend.fetch(name, "/health");
+        return { state: res.ok ? "online" : "degraded", code: res.status, ms: Date.now() - t0 };
+      } catch {
+        return { state: "offline", ms: Date.now() - t0 };
+      }
+    },
+    [host]
   );
 
-  const ping = useCallback(async () => {
-    setReach("checking");
-    try {
-      const res = await host.backend.fetch("atlas-api", "/health");
-      if (!alive.current) return;
-      setReach(res.ok ? "online" : "offline");
-    } catch {
-      if (!alive.current) return;
-      setReach("offline");
-    }
-    if (alive.current) {
-      setCheckedAt(
-        new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-      );
-    }
-  }, [host]);
+  const pingAll = useCallback(async () => {
+    setProbes((ps) => ps.map((p) => ({ ...p, state: "checking" as ProbeState })));
+    const results = await Promise.all(
+      PROBE_NAMES.map(async (name) => ({ name, ...(await probeOne(name)) }))
+    );
+    if (!alive.current) return;
+    setProbes((ps) => ps.map((p) => ({ ...p, ...(results.find((r) => r.name === p.name) ?? {}) })));
+    setCheckedAt(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
+  }, [probeOne]);
 
   useEffect(() => {
     alive.current = true;
-    void ping();
+    void pingAll();
     return () => {
       alive.current = false;
     };
-  }, [ping]);
+  }, [pingAll]);
 
-  const dotTone =
-    reach === "online" ? "ok" : reach === "offline" ? "err" : "wait";
-  const reachLabel =
-    reach === "online"
-      ? "Erreichbar"
-      : reach === "offline"
-      ? "Nicht erreichbar"
-      : "Wird geprüft…";
+  const copyDiagnostics = useCallback(async () => {
+    let version = "";
+    try {
+      version = await host.updater.version();
+    } catch {
+      /* version unavailable */
+    }
+    const lines = [
+      "Subunit Desktop — Diagnose",
+      `Version: v${version || "?"}`,
+      `Theme:   ${host.ui.theme()}`,
+      `System:  ${navigator.platform || navigator.userAgent}`,
+      `Zeit:    ${new Date().toISOString()}`,
+      "",
+      "Backends:",
+      ...probes.map(
+        (p) =>
+          `  ${p.name.padEnd(15)} ${p.state.padEnd(9)} ${(p.ms != null ? `${p.ms}ms` : "").padEnd(8)}${p.code ? `HTTP ${p.code}  ` : ""}${p.url}`
+      ),
+    ];
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      setCopied(true);
+      window.setTimeout(() => {
+        if (alive.current) setCopied(false);
+      }, 1800);
+    } catch {
+      /* clipboard unavailable */
+    }
+  }, [host, probes]);
+
+  const onlineCount = probes.filter((p) => p.state === "online").length;
+  const anyChecking = probes.some((p) => p.state === "checking");
+  const tone: Record<ProbeState, string> = { online: "ok", degraded: "wait", offline: "err", checking: "wait" };
+  const pillTone: Record<ProbeState, string> = { online: "live", degraded: "wait", offline: "gone", checking: "wait" };
+  const label: Record<ProbeState, string> = { online: "Erreichbar", degraded: "Gestört", offline: "Offline", checking: "Prüfe…" };
 
   return (
     <div className="set-sec">
       <PaneHead
         title="Verbindung"
-        sub="Das aktive Backend, gegen das Atlas, Synapse und die Modelle laufen."
+        sub="Erreichbarkeit aller Subunit-Backends von diesem Mac aus — die schnellste Diagnose, wenn etwas hakt."
       />
 
-      <div className="card set-block">
-        <div className="set-conn-top">
-          <span className={`set-dot ${dotTone}`} aria-hidden="true" />
-          <div className="set-conn-id">
-            <div className="set-conn-name">
-              atlas-api{" "}
-              <span className={`set-env ${isLocal ? "local" : "cloud"}`}>
-                {isLocal ? "Lokal" : "Cloud"}
+      <div className="set-health-head">
+        <span className="set-health-sum">
+          <b>{onlineCount}</b> von {probes.length} erreichbar
+          {checkedAt && <span className="set-health-t"> · {checkedAt}</span>}
+        </span>
+        <div className="set-health-act">
+          <button className="btn-ghost minibtn" onClick={() => void copyDiagnostics()}>
+            {copied ? "Kopiert ✓" : "Diagnose kopieren"}
+          </button>
+          <button className="btn-ghost minibtn" disabled={anyChecking} onClick={() => void pingAll()}>
+            Alle prüfen
+          </button>
+        </div>
+      </div>
+
+      <div className="card set-block tight set-list">
+        {probes.map((p) => (
+          <div key={p.name} className="set-health">
+            <span className={`set-dot ${tone[p.state]}`} aria-hidden="true" />
+            <div className="set-health-id">
+              <div className="set-health-n">
+                {p.name}
+                <span className={`set-env ${p.env}`}>{p.env === "local" ? "Lokal" : "Cloud"}</span>
+              </div>
+              <div className="set-health-url" title={p.url}>
+                {p.url || "—"}
+              </div>
+            </div>
+            <div className="set-health-r">
+              {p.ms != null && p.state !== "checking" && <span className="set-health-ms">{p.ms} ms</span>}
+              <span className={`pill ${pillTone[p.state]}`}>
+                {label[p.state]}
+                {p.code && p.state === "degraded" ? ` ${p.code}` : ""}
               </span>
             </div>
-            <div className="set-conn-url" title={baseUrl}>
-              {baseUrl || "Kein Backend konfiguriert"}
-            </div>
           </div>
-          <span className={`pill ${dotTone === "ok" ? "live" : dotTone === "err" ? "gone" : "wait"}`}>
-            {reachLabel}
-          </span>
-        </div>
+        ))}
+      </div>
 
-        <div className="set-divider" />
-
-        <Row label="Health-Check" desc={`GET /health${checkedAt ? ` · ${checkedAt}` : ""}`}>
-          <button
-            className="btn-ghost minibtn"
-            disabled={reach === "checking"}
-            onClick={() => void ping()}
-          >
-            Erneut prüfen
-          </button>
-        </Row>
-        <Row
-          label="Umgebung"
-          desc={
-            isLocal
-              ? "Verbindung zu einer lokalen Instanz auf diesem Mac."
-              : "Verbindung zur gehosteten Subunit-Cloud."
-          }
-        >
-          <span className={`set-env ${isLocal ? "local" : "cloud"}`}>
-            {isLocal ? "Lokal" : "Cloud"}
-          </span>
-        </Row>
+      <div className="set-note">
+        „Erreichbar" heißt: das Backend hat auf <code>/health</code> geantwortet. „Gestört" = geantwortet, aber mit
+        Fehlercode. „Offline" = keine Antwort (Dienst aus, Netz weg oder CORS geblockt).
       </div>
     </div>
   );
@@ -1275,6 +1328,21 @@ button.set-model:hover{background:var(--fill-weak)}
 .set-env.local{color:#0a9d63;background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.25)}
 .set-env.cloud{color:var(--cyan-d,#0891b2);background:rgba(6,182,212,.1);border:1px solid rgba(6,182,212,.26)}
 
+/* ── health matrix ── */
+.set-health-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:11px}
+.set-health-sum{font-size:13px;color:var(--ink2)}
+.set-health-sum b{color:var(--ink);font-size:14.5px}
+.set-health-t{color:var(--ink3)}
+.set-health-act{display:flex;gap:8px;flex:none}
+.set-health-act .btn-ghost{margin-top:0}
+.set-health{display:flex;align-items:center;gap:13px;padding:13px 6px}
+.set-health + .set-health{border-top:1px solid var(--line)}
+.set-health-id{flex:1;min-width:0}
+.set-health-n{display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:650;letter-spacing:-.01em;color:var(--ink);font-family:var(--mono,ui-monospace,monospace)}
+.set-health-url{font-size:11.5px;color:var(--ink3);margin-top:2px;font-family:var(--mono,ui-monospace,monospace);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.set-health-r{flex:none;display:flex;align-items:center;gap:9px}
+.set-health-ms{font-size:11px;color:var(--ink3);font-family:var(--mono,ui-monospace,monospace)}
+
 /* ── about ── */
 .set-about{padding:32px 24px}
 .set-mark{display:grid;place-items:center;width:72px;height:72px;border-radius:22px;margin:0 auto 16px;color:var(--cyan);background:var(--glass2);box-shadow:inset 0 1px 0 var(--rim),0 14px 34px -16px rgba(6,182,212,.45)}
@@ -1323,7 +1391,17 @@ const plugin: PluginModule = {
     description:
       "Theme, Konto, Updates, Modelle, Benachrichtigungen, Verbindung & App-Info.",
     icon: ICON,
-    permissions: ["updater", "storage", "backend:atlas-api", "notifications"],
+    permissions: [
+      "updater",
+      "storage",
+      "notifications",
+      // Health-Matrix probes every real module backend (Verbindung section).
+      "backend:atlas-api",
+      "backend:u1-chat",
+      "backend:sni-api",
+      "backend:transcribe-api",
+      "backend:memory-agent",
+    ],
     nav: { section: "ops", order: 90 },
     commands: [
       { id: "open", title: "Open Settings" },

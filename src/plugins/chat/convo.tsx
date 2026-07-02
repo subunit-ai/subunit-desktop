@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { HostApi } from "../../plugin/types";
+import { Markdown } from "../../components/Markdown";
 import {
   mediaObjectUrl,
   uploadFile,
@@ -58,7 +59,7 @@ export const ICONS = {
   x: "M18 6 6 18M6 6l12 12",
   search: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16Z|21 21l-4.3-4.3",
   check: "M20 6 9 17l-5-5",
-  checks: "M18 6 7 17l-4-4|22 10l-7.5 7.5-2-2",
+  checks: "M18 6 7 17l-4-4|M22 10l-7.5 7.5-2-2",
   dots: "M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z|19 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z|5 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z",
   download: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4|7 10l5 5 5-5|12 15V3",
   file: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z|14 2v6h6",
@@ -252,6 +253,9 @@ export interface BubbleProps {
   /** Read receipt: undefined = no receipt UI · false = sent · true = read. */
   read?: boolean;
   highlight?: string;
+  /** Render body as Markdown (assistant/bot output). Off = Plaintext wie Telegram.
+   *  Bei aktiver In-Convo-Suche fällt die Bubble auf Plaintext+Highlight zurück. */
+  markdown?: boolean;
   actions?: BubbleActions;
 }
 
@@ -279,9 +283,15 @@ export function Bubble(p: BubbleProps) {
             {p.deleted ? (
               <i className="msn-deleted">Nachricht gelöscht</i>
             ) : p.body ? (
-              <span className="msn-body">
-                <Highlight text={p.body} q={p.highlight} />
-              </span>
+              p.markdown && !p.highlight?.trim() ? (
+                <div className="msn-body md">
+                  <Markdown text={p.body} onLink={(u) => p.host.ui.openExternal(u)} />
+                </div>
+              ) : (
+                <span className="msn-body">
+                  <Highlight text={p.body} q={p.highlight} />
+                </span>
+              )
             ) : p.streaming ? (
               <span className="msn-typing">
                 <i />

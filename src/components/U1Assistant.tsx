@@ -20,10 +20,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { isTauri } from "../lib/ipc";
+import { isTauri, openExternal } from "../lib/ipc";
 import { BACKEND_BASE_URL } from "../lib/config";
 import { getToken } from "../lib/auth";
 import { SubunitMark } from "./SubunitMark";
+import { Markdown } from "./Markdown";
 import type { ClaudeSession, ProjectInfo } from "../plugin/types";
 
 /** A piece of context the user attached (Notion-style @) — a project or a session. */
@@ -391,7 +392,11 @@ export function U1Assistant({ pageName }: { pageName: string }) {
                 <div key={i} className={`u1a-msg ${m.role}`}>
                   {m.role === "u1" && <span className="u1a-msg-orb"><SubunitMark size={13} style={{ color: "#fff" }} /></span>}
                   <div className="u1a-bub">
-                    {m.text || (busy && i === msgs.length - 1 ? <span className="u1a-typing"><i /><i /><i /></span> : "")}
+                    {m.role === "u1" && m.text ? (
+                      <Markdown text={m.text} onLink={(u) => void openExternal(u)} />
+                    ) : (
+                      m.text || (busy && i === msgs.length - 1 ? <span className="u1a-typing"><i /><i /><i /></span> : "")
+                    )}
                   </div>
                 </div>
               ))

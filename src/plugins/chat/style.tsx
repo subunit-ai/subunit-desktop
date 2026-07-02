@@ -111,6 +111,7 @@ html.dark .msn-presence{border-color:#0b1220}
 .msn-msg.them .msn-bubble{background:var(--fill-strong);border:1px solid var(--line);color:var(--prose);border-bottom-left-radius:5px}
 .msn-msg.me .msn-bubble{background:linear-gradient(160deg,#22d3ee,#06b6d4);color:#fff;border-bottom-right-radius:5px}
 .msn-body mark{background:rgba(250,204,21,.55);color:inherit;border-radius:3px;padding:0 1px}
+.msn-body.md{display:block;min-width:0}
 .msn-deleted{opacity:.6}
 .msn-meta{display:inline-flex;align-items:center;gap:5px;font-size:10px;opacity:.72;margin-left:8px;vertical-align:bottom;white-space:nowrap;float:right;margin-top:8px}
 .msn-msg.them .msn-meta{color:var(--ink3);opacity:1}

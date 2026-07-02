@@ -317,6 +317,7 @@ export function BotConvoView(p: {
                     ) : undefined
                   }
                   body={m.body}
+                  markdown={m.role === "bot"}
                   time={m.created_at}
                   reactions={m.reactions}
                   replySender={m.reply_sender}
@@ -1020,6 +1021,7 @@ export function KiThreadView(p: {
                     ) : undefined
                   }
                   body={m.content}
+                  markdown={!mine}
                   deleted={!!m.deleted}
                   edited={!!m.edited}
                   streaming={m.streaming}

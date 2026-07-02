@@ -35,4 +35,5 @@ minisign*.key
 
 # dev-only visual preview harness (Cockpit etc.) — never ship
 /cockpit-preview.html
+/md-preview.html
 /src/dev/

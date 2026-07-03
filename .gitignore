@@ -38,3 +38,6 @@ minisign*.key
 /md-preview.html
 /src/dev/
 /xterm-preview.html
+
+# persönliche Claude-Code-Overrides (nie committen)
+.claude/settings.local.json

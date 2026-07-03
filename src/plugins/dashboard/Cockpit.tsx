@@ -120,6 +120,7 @@ export function Cockpit({
   refreshing,
   onRefresh,
   onResume,
+  onResumeInApp,
   onC1,
 }: {
   host: HostApi;
@@ -127,6 +128,9 @@ export function Cockpit({
   refreshing: boolean;
   onRefresh: () => void;
   onResume: (s: ClaudeSession) => void;
+  /** Session IN der App fortsetzen: spawnt `claude --resume <id>` als xterm-PTY.
+   * Nur für nicht-live Sessions sinnvoll (live = läuft schon in einem Terminal). */
+  onResumeInApp?: (s: ClaudeSession) => void;
   onC1: () => void;
 }) {
   const [modes, setModes] = useState<Record<string, Mode>>(() => loadJSON(MODE_KEY, {}));
@@ -386,6 +390,21 @@ export function Cockpit({
     [onResume]
   );
 
+  // Pending-Dialog direkt von der Karte beantworten: tippt die Ziffer (+Enter,
+  // via `do script`) in das echte Terminal — dieselbe gesicherte Inject-Lane wie
+  // Autonom (nur an laufende claude-ttys, TOCTOU-geprüft).
+  const answerPending = useCallback(
+    (s: ClaudeSession, digit: string) => {
+      if (!s.tty) return;
+      consec.current[s.id] = 0;
+      void host.terminals
+        .sendToTerminal(s.tty, digit)
+        .then(() => addLog(`Antwort → „${s.title}": Option ${digit}`))
+        .catch((err) => addLog(`Antwort-Fehler („${s.title}"): ${err instanceof Error ? err.message : String(err)}`));
+    },
+    [host, addLog]
+  );
+
   const filtersOn = prefs.status !== "all" || !!prefs.project || query.trim() !== "";
 
   const renderCard = (s: ClaudeSession) => (
@@ -408,6 +427,8 @@ export function Cockpit({
       onFlag={(f) => setFlag(s.id, f)}
       onToggleFlagMenu={() => setFlagOpen((cur) => (cur === s.id ? null : s.id))}
       onToggleExpand={() => toggleExpand(s.id)}
+      onAnswer={(digit) => answerPending(s, digit)}
+      onResumeInApp={onResumeInApp ? () => onResumeInApp(s) : undefined}
     />
   );
 
@@ -569,6 +590,8 @@ function SessionCard({
   onFlag,
   onToggleFlagMenu,
   onToggleExpand,
+  onAnswer,
+  onResumeInApp,
 }: {
   s: ClaudeSession;
   mode: Mode;
@@ -583,6 +606,10 @@ function SessionCard({
   onFlag: (f: Flag | null) => void;
   onToggleFlagMenu: () => void;
   onToggleExpand: () => void;
+  /** Pending-Dialog beantworten: tippt die Ziffer (+Enter) ins echte Terminal. */
+  onAnswer: (digit: string) => void;
+  /** `claude --resume` als In-App-PTY (nur nicht-live Sessions). */
+  onResumeInApp?: () => void;
 }) {
   const st = STAT[(s.status as TStatus) ?? "idle"];
   const fm = flagMeta(flag);
@@ -639,6 +666,47 @@ function SessionCard({
         {openTodos.length > 0 && <span className="cb-todos" title={openTodos.map((t) => t.content).join("\n")}>{openTodos.length} To-do{openTodos.length > 1 ? "s" : ""}</span>}
       </div>
 
+      {/* Pending-Interaktion: Frage/Freigabe direkt von der Karte beantworten.
+          AskUserQuestion ist eindeutig (reines UI-Tool). Bei anderen Tools kann
+          „offen" auch „läuft noch lange" heißen → nur im waiting-Status zeigen. */}
+      {s.pendingTool && s.tty && s.pendingTool === "AskUserQuestion" && (
+        <div className="cb-pending">
+          <div className="cb-pending-h">Frage an dich</div>
+          {s.pendingDetail && <div className="cb-pending-d">{s.pendingDetail}</div>}
+          <div className="cb-pending-opts">
+            {(s.pendingOptions ?? []).map((o, i) => (
+              <button
+                key={i}
+                className="cb-act cb-pending-opt"
+                onClick={() => onAnswer(String(i + 1))}
+                title={`Option ${i + 1} wählen (tippt ${i + 1}↵ ins Terminal)`}
+              >
+                <span className="cb-pending-n">{i + 1}</span>
+                {o}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {s.pendingTool && s.tty && s.pendingTool !== "AskUserQuestion" && s.status === "waiting" && (
+        <div className="cb-pending">
+          <div className="cb-pending-h">Wartet auf Freigabe: {s.pendingTool}</div>
+          {s.pendingDetail && <div className="cb-pending-d mono">{s.pendingDetail}</div>}
+          <div className="cb-pending-opts">
+            <button
+              className="cb-act cb-pending-opt yes"
+              onClick={() => onAnswer("1")}
+              title="Option 1 = Ja/Erlauben (tippt 1↵ ins Terminal)"
+            >
+              Erlauben (1↵)
+            </button>
+            <button className="cb-act cb-pending-opt" onClick={onOpen} title="Ablehnen/Details im echten Terminal">
+              Im Terminal ansehen ↗
+            </button>
+          </div>
+        </div>
+      )}
+
       {s.summary && !expanded && <div className="cb-card-prev">{s.summary}</div>}
 
       {expanded && (
@@ -663,6 +731,11 @@ function SessionCard({
 
       <div className="cb-card-foot">
         <button className="cb-act primary" onClick={onOpen}>{s.tty ? "Zum Terminal ↗" : "Öffnen ↗"}</button>
+        {!s.live && onResumeInApp && s.cwdExists && (
+          <button className="cb-act" onClick={onResumeInApp} title="claude --resume in der App (echtes Terminal im Cockpit)">
+            In der App
+          </button>
+        )}
         <button className="cb-act" onClick={onU1}>✦ U1</button>
         <button className={`cb-act ghost${expanded ? " on" : ""}`} onClick={onToggleExpand} title="Live-Verlauf anzeigen">
           Vorschau {expanded ? "⌃" : "⌄"}
@@ -765,6 +838,16 @@ function CockpitStyle() {
 .cb-warn{color:#b45309;font-weight:600}
 .cb-todos{color:var(--cyan-d,#0891b2);font-weight:650;background:rgba(6,182,212,.08);border:1px solid rgba(6,182,212,.2);border-radius:6px;padding:0 6px}
 .cb-card-prev{font-size:12px;line-height:1.5;color:var(--ink3);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;border-left:2px solid var(--line);padding-left:9px}
+
+/* ── pending interaction (Frage/Freigabe direkt auf der Karte) ── */
+.cb-pending{display:flex;flex-direction:column;gap:7px;padding:9px 11px;border-radius:11px;border:1px solid rgba(245,158,11,.4);background:rgba(245,158,11,.08)}
+.cb-pending-h{font-size:11px;font-weight:750;letter-spacing:.03em;color:var(--amber,#b45309)}
+.cb-pending-d{font-size:12px;line-height:1.45;color:var(--prose)}
+.cb-pending-d.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;word-break:break-all}
+.cb-pending-opts{display:flex;flex-wrap:wrap;gap:6px}
+.cb-pending-opt{display:inline-flex;align-items:center;gap:6px;text-align:left}
+.cb-pending-opt.yes{border-color:rgba(34,197,94,.5);color:var(--ok,#15803d)}
+.cb-pending-n{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:5px;border:1px solid currentColor;font-size:10px;font-weight:700;flex:none}
 
 /* ── inline transcript (expanded) ── */
 .cb-convo{max-height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:10px 11px;border-radius:11px;background:var(--fill-weak);border:1px solid var(--line)}

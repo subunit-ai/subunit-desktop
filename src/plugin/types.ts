@@ -241,6 +241,13 @@ export interface ClaudeSession {
   /** Controlling TTY of the live process (e.g. "ttys014") — for focusing the real
    * Terminal.app tab. Absent if the session isn't mapped to a running terminal. */
   tty?: string;
+  /** Pending TUI-Dialog: Transcript endet in tool_use ohne tool_result (nur live).
+   * "AskUserQuestion" = echte Frage mit Optionen, sonst Permission-Prompt. */
+  pendingTool?: string;
+  /** Menschlicher Preview (Bash→command, Write/Edit→file, Frage→Fragetext). */
+  pendingDetail?: string;
+  /** AskUserQuestion-Options-Labels; Anzeigereihenfolge = TUI-Ziffern 1..n. */
+  pendingOptions?: string[];
 }
 
 export interface HostTerminals {

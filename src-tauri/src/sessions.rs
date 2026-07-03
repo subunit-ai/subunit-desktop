@@ -57,6 +57,14 @@ pub struct ClaudeSession {
     /// Controlling TTY of the live `claude` process (e.g. "ttys014") — lets the
     /// cockpit bring the REAL Terminal.app tab to the front. None if not mapped.
     pub tty: Option<String>,
+    /// Pending interaction: the transcript ends in a `tool_use` without a matching
+    /// `tool_result` → the session waits on a TUI dialog (permission prompt or
+    /// AskUserQuestion). Only surfaced for live sessions.
+    pub pending_tool: Option<String>,
+    /// Human preview of what's pending (Bash→command, Write/Edit→file, Frage→text).
+    pub pending_detail: Option<String>,
+    /// AskUserQuestion option labels (1-based display order = TUI digit keys).
+    pub pending_options: Option<Vec<String>>,
 }
 
 fn now_ms() -> u64 {
@@ -331,6 +339,9 @@ fn parse_session(
     let mut last_prompt = String::new();
     let mut summary = String::new();
     let mut todos: Vec<TodoItem> = Vec::new();
+    // Offene tool_use-Blöcke (id → (name, input)). Ein tool_use ohne späteres
+    // tool_result am Transcript-Ende = die Session wartet auf einen TUI-Dialog.
+    let mut open_tools: Vec<(String, String, serde_json::Value)> = Vec::new();
 
     for line in tail.lines() {
         let line = line.trim();
@@ -359,11 +370,44 @@ fn parse_session(
                 if !t.trim().is_empty() {
                     last_prompt = t;
                 }
+                // tool_result-Blöcke schließen offene tool_uses.
+                if let Some(content) = v
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_array())
+                {
+                    for b in content {
+                        if b.get("type").and_then(|t| t.as_str()) == Some("tool_result") {
+                            if let Some(tid) = b.get("tool_use_id").and_then(|x| x.as_str()) {
+                                open_tools.retain(|(id, _, _)| id != tid);
+                            }
+                        }
+                    }
+                }
             }
             Some("assistant") => {
                 let t = extract_text(v.get("message"));
                 if !t.trim().is_empty() {
                     summary = t;
+                }
+                if let Some(content) = v
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_array())
+                {
+                    for b in content {
+                        if b.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
+                            let id = b.get("id").and_then(|x| x.as_str()).unwrap_or_default();
+                            let name = b.get("name").and_then(|x| x.as_str()).unwrap_or_default();
+                            if !id.is_empty() && !name.is_empty() {
+                                open_tools.push((
+                                    id.to_string(),
+                                    name.to_string(),
+                                    b.get("input").cloned().unwrap_or(serde_json::Value::Null),
+                                ));
+                            }
+                        }
+                    }
                 }
             }
             _ => {}
@@ -399,6 +443,16 @@ fn parse_session(
     }
     .to_string();
 
+    // Pending-Interaktion nur für live Sessions (die Antwort-Buttons brauchen
+    // ohnehin eine tty); bei toten Sessions wäre es nur ein stale Artefakt.
+    let (pending_tool, pending_detail, pending_options) = match open_tools.last() {
+        Some((_, name, input)) if live => {
+            let (detail, options) = pending_preview(name, input);
+            (Some(name.clone()), detail, options)
+        }
+        _ => (None, None, None),
+    };
+
     Some(ClaudeSession {
         id,
         project_path: String::new(),
@@ -412,7 +466,68 @@ fn parse_session(
         cwd_exists: false,
         todos,
         tty,
+        pending_tool,
+        pending_detail,
+        pending_options,
     })
+}
+
+/// Menschlicher Preview + (für AskUserQuestion) die Options-Labels eines pending
+/// tool_use — was die Cockpit-Karte anzeigt; Options-Reihenfolge = TUI-Ziffern 1..n.
+fn pending_preview(name: &str, input: &serde_json::Value) -> (Option<String>, Option<Vec<String>>) {
+    match name {
+        "AskUserQuestion" => {
+            let q = input
+                .get("questions")
+                .and_then(|x| x.as_array())
+                .and_then(|a| a.first());
+            let text = q
+                .and_then(|q| q.get("question"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("Frage");
+            let multi = q
+                .and_then(|q| q.get("multiSelect"))
+                .and_then(|x| x.as_bool())
+                .unwrap_or(false);
+            let opts: Vec<String> = q
+                .and_then(|q| q.get("options"))
+                .and_then(|x| x.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|o| o.get("label").and_then(|l| l.as_str()))
+                        .map(|s| truncate(s, 60))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let detail = if multi {
+                format!("(Mehrfachwahl) {text}")
+            } else {
+                text.to_string()
+            };
+            (
+                Some(truncate(&detail, 200)),
+                if opts.is_empty() { None } else { Some(opts) },
+            )
+        }
+        "Bash" => (
+            input
+                .get("command")
+                .and_then(|x| x.as_str())
+                .map(|s| truncate(s, 160)),
+            None,
+        ),
+        "Write" | "Edit" | "MultiEdit" | "NotebookEdit" => (
+            input
+                .get("file_path")
+                .and_then(|x| x.as_str())
+                .map(|s| truncate(s, 160)),
+            None,
+        ),
+        _ => (
+            serde_json::to_string(input).ok().map(|s| truncate(&s, 160)),
+            None,
+        ),
+    }
 }
 
 /// List Claude Code sessions across all known project dirs (newest activity first).

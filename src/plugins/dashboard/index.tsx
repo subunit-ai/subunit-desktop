@@ -723,6 +723,28 @@ function DashboardView({ host }: { host: HostApi }) {
     [host, loadTerms]
   );
 
+  // Nicht-live Cockpit-Session IN der App fortsetzen (`claude --resume <id>` im
+  // xterm-PTY) — der Rust-Arg-Validator erlaubt --resume explizit.
+  const resumeInApp = useCallback(
+    async (s: ClaudeSession) => {
+      try {
+        const id = await host.terminals.spawn({
+          cmd: "claude",
+          args: ["--resume", s.id],
+          cwd: s.projectPath,
+          title: `${s.projectName} · resume`,
+        });
+        host.notifications.notify("Session fortgesetzt", s.title || s.projectName);
+        await loadTerms();
+        const list = await host.terminals.list();
+        setActiveTerm(list.find((t) => t.id === id) ?? null);
+      } catch (e) {
+        host.notifications.notify("Fehler", e instanceof Error ? e.message : String(e));
+      }
+    },
+    [host, loadTerms]
+  );
+
   // Load the LOCAL answer models (the downloaded ollama ones) for "Lokal ausführen".
   useEffect(() => {
     let cancelled = false;
@@ -885,6 +907,7 @@ function DashboardView({ host }: { host: HostApi }) {
         sessions={sessions}
         refreshing={sessionsRefreshing}
         onResume={openRealTerminal}
+        onResumeInApp={resumeInApp}
         onRefresh={loadSessions}
         onC1={() => setC1Open(true)}
       />

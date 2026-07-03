@@ -12,6 +12,7 @@ mod ingest; // synapse → real n8n axon-ingest webhooks
 mod commands;
 mod config;
 mod http; // shared pooled HTTP client for the cloud auth path
+mod remote; // server tmux sessions (subunit-server) in the cockpit
 mod sessions; // read-only discovery of Claude Code sessions (the cockpit)
 mod terminal; // local PTY terminals + external plugin discovery
 
@@ -95,6 +96,10 @@ pub fn run() {
             terminal::list_projects,
             // Read-only Claude Code session discovery for the cockpit (sessions.rs).
             sessions::list_claude_sessions,
+            // Server tmux lane (remote.rs).
+            remote::list_remote_sessions,
+            remote::remote_capture,
+            remote::remote_send,
             // Bring a session's REAL Terminal.app tab to the front / open + resume.
             sessions::focus_terminal,
             sessions::open_terminal_resume,

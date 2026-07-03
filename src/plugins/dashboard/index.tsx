@@ -31,6 +31,7 @@ import type {
 import { chatSeedMailbox, listTasks, toggleTask, type TaskDTO } from "../../lib/u1chat";
 import { C1Panel } from "./C1";
 import { Cockpit } from "./Cockpit";
+import { ServerLane } from "./ServerLane";
 import { XtermView } from "./XtermView";
 
 // Dock glyph — a control board (mirrors the original reference icon).
@@ -917,6 +918,7 @@ function DashboardView({ host }: { host: HostApi }) {
       <div className="dash-grid">
         <div className="dash-maincol">
           <ProjektePanel projects={projects} onOpen={newTerminal} onClaude={newClaude} />
+          <ServerLane />
           <TasksPanel
             tasks={tasks}
             loading={tasksLoading}

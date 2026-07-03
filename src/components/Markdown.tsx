@@ -40,6 +40,9 @@ html.dark .sumd-cb{background:rgba(0,0,0,.3)}
 .sumd-cb-c{display:inline-flex;align-items:center;gap:4px;background:none;border:none;color:inherit;cursor:pointer;font:inherit;font-size:11px;padding:2px 5px;border-radius:5px}
 .sumd-cb-c:hover{background:var(--fill,rgba(127,127,127,.15))}
 .sumd-cb-c svg{width:13px;height:13px}
+.sumd-cb-sp{flex:1}
+.sumd-cb-c.on{background:var(--fill,rgba(127,127,127,.15))}
+.sumd-art{display:block;width:100%;height:320px;border:none;background:#fff;border-radius:0 0 9px 9px}
 .sumd-cb pre{margin:0;padding:10px 12px;overflow-x:auto}
 .sumd-cb pre code{background:none;border:none;padding:0;font-size:12.5px;line-height:1.5;white-space:pre}
 .sumd-tbl{overflow-x:auto;margin:0 0 8px}
@@ -69,12 +72,23 @@ function textOf(node: ReactNode): string {
   return "";
 }
 
+/** Sprachen, die sich als Artefakt rendern lassen (sandboxed iframe, kein Netz/JS-Zugriff nach außen). */
+const PREVIEWABLE = new Set(["html", "svg", "xml"]);
+
 function CodeBlock({ lang, code }: { lang: string; code: string }) {
   const [copied, setCopied] = useState(false);
+  const [preview, setPreview] = useState(false);
+  const canPreview = PREVIEWABLE.has(lang) || (!lang && /^\s*<(!doctype|html|svg)/i.test(code));
   return (
     <div className="sumd-cb">
       <div className="sumd-cb-h">
         <span className="sumd-cb-l">{lang || "code"}</span>
+        <span className="sumd-cb-sp" />
+        {canPreview && (
+          <button className={`sumd-cb-c${preview ? " on" : ""}`} title={preview ? "Code zeigen" : "Als Artefakt rendern (sandboxed)"} onClick={() => setPreview((v) => !v)}>
+            {preview ? "Code" : "Vorschau"}
+          </button>
+        )}
         <button
           className="sumd-cb-c"
           title="Code kopieren"
@@ -98,9 +112,15 @@ function CodeBlock({ lang, code }: { lang: string; code: string }) {
           )}
         </button>
       </div>
-      <pre>
-        <code>{code}</code>
-      </pre>
+      {preview && canPreview ? (
+        // sandbox ohne allow-same-origin/allow-top-navigation: Scripts laufen isoliert,
+        // kein Zugriff auf App-Origin, Storage oder die Tauri-Bridge.
+        <iframe className="sumd-art" sandbox="allow-scripts" srcDoc={code} title="Artefakt-Vorschau" />
+      ) : (
+        <pre>
+          <code>{code}</code>
+        </pre>
+      )}
     </div>
   );
 }

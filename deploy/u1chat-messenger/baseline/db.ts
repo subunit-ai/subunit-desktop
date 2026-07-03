@@ -69,10 +69,10 @@ export function listThreads(owner: string): any[] {
 }
 
 export function getMessages(threadId: string, owner: string): any[] {
-  return db
+  const rows = db
     .query(`SELECT m.id, m.role,
         CASE WHEN m.deleted_at IS NOT NULL THEN '' ELSE m.content END AS content,
-        m.created_at, m.reply_to,
+        m.created_at, m.attachments, m.reply_to,
         CASE WHEN m.reply_to IS NULL THEN NULL ELSE
           (CASE r.role WHEN 'user' THEN 'Du' WHEN 'assistant' THEN 'u1' ELSE 'System' END) END AS reply_sender,
         CASE WHEN m.reply_to IS NULL THEN NULL ELSE substr(r.content, 1, 120) END AS reply_text,
@@ -82,7 +82,8 @@ export function getMessages(threadId: string, owner: string): any[] {
       JOIN threads t ON t.id = m.thread_id
       WHERE m.thread_id = ? AND t.owner = ?
       ORDER BY m.id ASC`)
-    .all(threadId, owner);
+    .all(threadId, owner) as any[];
+  return rows.map((r) => { try { r.attachments = (r.deleted || !r.attachments) ? [] : JSON.parse(r.attachments); } catch { r.attachments = []; } return r; });
 }
 
 export function countMessages(threadId: string, owner: string): number {
@@ -95,13 +96,13 @@ export function countMessages(threadId: string, owner: string): number {
   return r?.n ?? 0;
 }
 
-export function addMessage(threadId: string, owner: string, role: string, content: string, replyTo: number | null = null) {
+export function addMessage(threadId: string, owner: string, role: string, content: string, replyTo: number | null = null, attachmentsJson = "") {
   const t = now();
   db.run(
-    `INSERT INTO messages (thread_id, role, content, created_at, reply_to)
-      SELECT ?, ?, ?, ?, ?
+    `INSERT INTO messages (thread_id, role, content, created_at, reply_to, attachments)
+      SELECT ?, ?, ?, ?, ?, ?
       WHERE EXISTS (SELECT 1 FROM threads WHERE id = ? AND owner = ?)`,
-    [threadId, role, content, t, replyTo, threadId, owner],
+    [threadId, role, content, t, replyTo, attachmentsJson || "", threadId, owner],
   );
   db.run("UPDATE threads SET updated_at = ? WHERE id = ? AND owner = ?", [t, threadId, owner]);
 }
@@ -365,6 +366,13 @@ for (const [tbl] of [["messages"], ["team_messages"]] as [string][]) {
   if (!cols.includes("deleted_at")) db.run(`ALTER TABLE ${tbl} ADD COLUMN deleted_at INTEGER`);
 }
 
+// Anhänge an KI-Thread-Nachrichten persistieren (Anzeige nach Reload; das Modell
+// bekommt sie unabhängig davon als Pfad-Manifest im Prompt). Additiv, wie team_messages.
+{
+  const cols = (db.query(`PRAGMA table_info(messages)`).all() as any[]).map((c) => c.name);
+  if (!cols.includes("attachments")) db.run(`ALTER TABLE messages ADD COLUMN attachments TEXT NOT NULL DEFAULT ''`);
+}
+
 // Edit/Delete-Helfer (Endpunkte kommen in Slice 3; nur eigene Nachrichten).
 export function editThreadMessage(threadId: string, msgId: number, content: string): boolean {
   const r: any = db.run("UPDATE messages SET content = ?, edited_at = ? WHERE id = ? AND thread_id = ? AND role = 'user' AND deleted_at IS NULL",
@@ -501,4 +509,39 @@ export function botOwnsMessage(botId: string, msgId: number): boolean {
 }
 export function lastBotMessage(botId: string): any {
   return db.query("SELECT role, sender, body, created_at FROM bot_messages WHERE bot_id = ? ORDER BY id DESC LIMIT 1").get(botId);
+}
+
+// Einzelnachricht-Getter fürs Weiterleiten (Zugriffscheck macht die Route).
+export function getTeamMessage(convoId: string, msgId: number): any {
+  return db.query("SELECT id, sender, body, attachments, deleted_at FROM team_messages WHERE id = ? AND convo_id = ?").get(msgId, convoId);
+}
+export function getBotMessage(botId: string, msgId: number): any {
+  return db.query("SELECT id, sender, sender_name, role, body FROM bot_messages WHERE id = ? AND bot_id = ?").get(msgId, botId);
+}
+export function getThreadMessage(threadId: string, msgId: number): any {
+  return db.query("SELECT id, role, content, attachments, deleted_at FROM messages WHERE id = ? AND thread_id = ?").get(msgId, threadId);
+}
+
+// Globale Nachrichten-Suche (Rail): LIKE über Team-/KI-/Bot-Nachrichten des Users,
+// neueste zuerst, je Lane gedeckelt. ESCAPE neutralisiert %/_ im Suchbegriff.
+export function searchMessages(q: string, email: string, isOp: boolean, botIds: string[]): { team: any[]; threads: any[]; bots: any[] } {
+  const pat = "%" + q.replace(/[\\%_]/g, (m) => "\\" + m) + "%";
+  const team = db.query(`SELECT m.id AS msg_id, m.convo_id, m.sender, substr(m.body, 1, 140) AS snippet, m.created_at
+      FROM team_messages m
+      JOIN team_convo_members mem ON mem.convo_id = m.convo_id AND mem.email = ?
+      WHERE m.deleted_at IS NULL AND m.body LIKE ? ESCAPE '\\'
+      ORDER BY m.id DESC LIMIT 20`).all(email, pat) as any[];
+  const threads = isOp
+    ? (db.query(`SELECT m.id AS msg_id, m.thread_id, m.role, substr(m.content, 1, 140) AS snippet, m.created_at, t.title
+      FROM messages m JOIN threads t ON t.id = m.thread_id
+      WHERE t.owner = ? AND m.deleted_at IS NULL AND m.content LIKE ? ESCAPE '\\' AND t.status = 'active'
+      ORDER BY m.id DESC LIMIT 20`).all(email, pat) as any[])
+    : [];
+  const ph = botIds.map(() => "?").join(",");
+  const bots = botIds.length
+    ? (db.query(`SELECT m.id AS msg_id, m.bot_id, m.role, m.sender, m.sender_name, substr(m.body, 1, 140) AS snippet, m.created_at
+      FROM bot_messages m WHERE m.bot_id IN (${ph}) AND m.body LIKE ? ESCAPE '\\'
+      ORDER BY m.id DESC LIMIT 20`).all(...botIds, pat) as any[])
+    : [];
+  return { team, threads, bots };
 }

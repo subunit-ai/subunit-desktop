@@ -19,6 +19,7 @@ import {
 import { setPin, renameConvo, addConvoMember, removeConvoMember, getTeamMessageBrief } from "./db.ts";
 import { getAttachmentById, linkAttachment, mediaSharedWithMember } from "./db.ts";
 import { setRead, unreadCount, otherReadId } from "./db.ts";
+import { searchMessages, getTeamMessage, getBotMessage, getThreadMessage } from "./db.ts";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
 import { streamClaude, classify } from "./claude.ts";
@@ -779,7 +780,8 @@ async function handle(req: Request): Promise<Response> {
     const parsed = await readJsonLimited(req, MAX_MESSAGE_BODY_BYTES);
     if (!parsed.ok) return parsed.response;
     const content = String(parsed.value.content || "").trim();
-    if (!content) return json({ error: "empty" }, 400);
+    const hasAttIds = Array.isArray(parsed.value.attachment_ids) && parsed.value.attachment_ids.length > 0;
+    if (!content && !hasAttIds) return json({ error: "empty" }, 400);
     if (content.length > MAX_MESSAGE_CHARS || encoder.encode(content).length > MAX_MESSAGE_BODY_BYTES) {
       return json({ error: "payload_too_large" }, 413);
     }
@@ -788,6 +790,16 @@ async function handle(req: Request): Promise<Response> {
     const model = validModel(parsed.value.model, currentModel);
     if (!model) return json({ error: "invalid_model" }, 400);
     if (model !== t.model) setThreadMeta(threadId, sess.email, { model });
+
+    // Anhänge (Subunit iOS + Desktop): absolute Pfade als Manifest vor den Prompt — u1 liest sie
+    // mit seinen Tools. Meta ({id,kind,name}) wird an der Nachricht persistiert (Verlauf nach Reload).
+    // VOR acquireStream auflösen: der Empty-Return darf keinen Stream-Slot leaken.
+    const attIds = Array.isArray(parsed.value.attachment_ids) ? parsed.value.attachment_ids.map(String) : [];
+    const atts = attIds.length ? getAttachmentsByIds(attIds, sess.email) : [];
+    if (!content && !atts.length) return json({ error: "empty" }, 400); // leer bzw. ids gehören dem User nicht
+    const attMeta = atts.map((a: any) => ({ id: a.id, kind: a.kind, name: a.name }));
+    const manifest = atts.map((a: any) => `[Anhang ${a.kind}: ${a.path}]`).join("\n");
+    const promptForClaude = [manifest, content].filter(Boolean).join("\n\n");
 
     const streamLimit = acquireStream(sess.email);
     if (streamLimit) return streamLimit;
@@ -804,13 +816,7 @@ async function handle(req: Request): Promise<Response> {
       const rid = Math.trunc(parsed.value.reply_to);
       if (threadOwnsMessage(threadId, rid)) replyTo = rid;
     }
-    addMessage(threadId, sess.email, "user", content, replyTo);
-
-    // Anhänge (Subunit iOS): absolute Pfade als Manifest vor den Prompt — u1 liest sie mit seinen Tools.
-    const attIds = Array.isArray(parsed.value.attachment_ids) ? parsed.value.attachment_ids.map(String) : [];
-    const atts = attIds.length ? getAttachmentsByIds(attIds, sess.email) : [];
-    const manifest = atts.map((a: any) => `[Anhang ${a.kind}: ${a.path}]`).join("\n");
-    const promptForClaude = manifest ? manifest + "\n\n" + content : content;
+    addMessage(threadId, sess.email, "user", content, replyTo, attMeta.length ? JSON.stringify(attMeta) : "");
     const VALID_EFFORT = new Set(["low", "medium", "high", "max"]);
     const effort = VALID_EFFORT.has(String(parsed.value.effort)) ? String(parsed.value.effort) : "";
 
@@ -837,7 +843,7 @@ async function handle(req: Request): Promise<Response> {
           // Selbst-organisierend: nach dem ersten Austausch Titel + Farbe ziehen.
           if (isFirst && !t.titled) {
             try {
-              const meta = await classify(content);
+              const meta = await classify(content || attMeta.map((a: any) => a.name).join(", "));
               setThreadMeta(threadId, sess.email, { ...meta, titled: 1 });
               enc(sse("meta", meta));
             } catch (e) {
@@ -1033,6 +1039,54 @@ async function handle(req: Request): Promise<Response> {
     teamPublish(mConvoMsg[1], "message", msg);
     return json(msg);
   }
+
+  // ===== Weiterleiten: Quelle (team|bot|ki) → Ziel-Team-Convo, server-seitig =====
+  // Muss hier laufen (nicht im Client): Attachment-Ownership bleibt beim Original-
+  // Uploader; Ziel-Mitglieder bekommen Zugriff über die team_msg_attachments-Links.
+  const mFwd = path.match(/^\/api\/team\/convos\/([0-9a-f-]+)\/forward$/);
+  if (mFwd && req.method === "POST") {
+    const target = mFwd[1];
+    if (!isConvoMember(target, sess.email)) return json({ error: "not found" }, 404);
+    const parsed = await readJsonLimited(req, 4096);
+    if (!parsed.ok) return parsed.response;
+    const srcKind = String(parsed.value.source || "");
+    const srcId = String(parsed.value.source_id || "");
+    const msgId = Math.trunc(Number(parsed.value.msg_id));
+    if (!Number.isFinite(msgId) || msgId <= 0) return json({ error: "bad_request" }, 400);
+    let srcBody = "";
+    let srcAtts: any[] = [];
+    let fromLabel = "";
+    if (srcKind === "team") {
+      if (!isConvoMember(srcId, sess.email)) return json({ error: "not found" }, 404);
+      const m: any = getTeamMessage(srcId, msgId);
+      if (!m || m.deleted_at) return json({ error: "not found" }, 404);
+      srcBody = m.body;
+      fromLabel = m.sender;
+      try { srcAtts = m.attachments ? JSON.parse(m.attachments) : []; } catch { srcAtts = []; }
+    } else if (srcKind === "bot") {
+      const b = BOTS[srcId];
+      if (!b || !b.acl.includes(sess.email)) return json({ error: "not found" }, 404);
+      const m: any = getBotMessage(srcId, msgId);
+      if (!m) return json({ error: "not found" }, 404);
+      srcBody = m.body;
+      fromLabel = m.role === "bot" ? b.name : (m.sender_name || m.sender);
+    } else if (srcKind === "ki") {
+      if (sess.op !== true || !getThread(srcId, sess.email)) return json({ error: "not found" }, 404);
+      const m: any = getThreadMessage(srcId, msgId);
+      if (!m || m.deleted_at) return json({ error: "not found" }, 404);
+      srcBody = m.content;
+      fromLabel = m.role === "assistant" ? "u1" : sess.email;
+      try { srcAtts = m.attachments ? JSON.parse(m.attachments) : []; } catch { srcAtts = []; }
+    } else {
+      return json({ error: "bad_request" }, 400);
+    }
+    if (!srcBody && !srcAtts.length) return json({ error: "empty" }, 400);
+    const fwdBody = (`↪ Weitergeleitet von ${fromLabel}` + (srcBody ? `\n${srcBody}` : "")).slice(0, MAX_MESSAGE_CHARS);
+    for (const a of srcAtts) linkAttachment(String(a.id), target);
+    const msg = addConvoMessage(target, sess.email, fwdBody, null, srcAtts.length ? JSON.stringify(srcAtts) : "");
+    teamPublish(target, "message", msg);
+    return json(msg);
+  }
   const mConvoStream = path.match(/^\/api\/team\/convos\/([0-9a-f-]+)\/stream$/);
   if (mConvoStream && req.method === "GET") {
     const convoId = mConvoStream[1];
@@ -1201,6 +1255,14 @@ async function handle(req: Request): Promise<Response> {
     if (!isConvoMember(mLeave[1], sess.email)) return json({ error: "not found" }, 404);
     removeConvoMember(mLeave[1], sess.email);
     return json({ ok: true });
+  }
+
+  // ===== Globale Suche (Rail): Team + KI + Bots des eingeloggten Users =====
+  if (path === "/api/search" && req.method === "GET") {
+    const q = String(url.searchParams.get("q") || "").trim();
+    if (q.length < 2) return json({ team: [], threads: [], bots: [] });
+    const myBots = Object.values(BOTS).filter((b) => b.acl.includes(sess.email)).map((b) => b.id);
+    return json(searchMessages(q, sess.email, sess.op === true, myBots));
   }
 
   // ===== Bots (Subunit Messenger: geteilte Räume mit Account-ACL) =====

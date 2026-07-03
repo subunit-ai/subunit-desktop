@@ -42,7 +42,7 @@ async function api(sub: string, opts: RequestInit = {}): Promise<any> {
 
 const Svg = (p: { d: string }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-    {p.d.split("|").map((d, i) => <path key={i} d={d} />)}
+    {p.d.split("|").map((d, i) => <path key={i} d={/^\s*[Mm]/.test(d) ? d : `M${d}`} />)}
   </svg>
 );
 

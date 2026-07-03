@@ -25,7 +25,7 @@ const ICON = `<svg viewBox="0 0 24 24"><path d="M3 9h18M9 9v12M5 3h14a2 2 0 0 1 
 const Svg = (props: { d: string }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
     {props.d.split("|").map((p, i) => (
-      <path key={i} d={p} />
+      <path key={i} d={/^\s*[Mm]/.test(p) ? p : `M${p}`} />
     ))}
   </svg>
 );

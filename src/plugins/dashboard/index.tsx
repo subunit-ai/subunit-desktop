@@ -49,7 +49,7 @@ const Svg = (props: { d: string; fill?: boolean }) => (
     strokeLinejoin="round"
   >
     {props.d.split("|").map((p, i) => (
-      <path key={i} d={p} fill={props.fill ? "currentColor" : "none"} />
+      <path key={i} d={/^\s*[Mm]/.test(p) ? p : `M${p}`} fill={props.fill ? "currentColor" : "none"} />
     ))}
   </svg>
 );

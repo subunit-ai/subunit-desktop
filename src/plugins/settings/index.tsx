@@ -58,7 +58,7 @@ const Svg = (props: { d: string }) => (
     strokeLinejoin="round"
   >
     {props.d.split("|").map((p, i) => (
-      <path key={i} d={p} />
+      <path key={i} d={/^\s*[Mm]/.test(p) ? p : `M${p}`} />
     ))}
   </svg>
 );

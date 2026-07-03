@@ -14,7 +14,8 @@ node -e "for(const f of ['package.json','src-tauri/tauri.conf.json']){const p=re
 # Cargo.toml [package] version only
 sed -i '' -e '/^\[package\]/,/^\[/ s/^version = ".*"/version = "'"$ver"'"/' src-tauri/Cargo.toml
 
-git add -A
+# Chirurgisch: NUR die Versionsdateien — nie parallele WIP/untracked Ordner mitreißen.
+git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
 git commit -q -m "release v$ver"
 git tag "v$ver"
 git push -q && git push -q origin "v$ver"

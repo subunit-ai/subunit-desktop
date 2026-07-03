@@ -87,6 +87,7 @@ pub fn run() {
             terminal::spawn_terminal,
             terminal::list_terminals,
             terminal::write_terminal,
+            terminal::resize_terminal,
             terminal::kill_terminal,
             // External plugin discovery (terminal.rs).
             terminal::list_plugins,

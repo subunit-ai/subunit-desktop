@@ -429,6 +429,29 @@ pub fn write_terminal(
     Ok(())
 }
 
+/// Resize a session's PTY to match the frontend emulator (xterm.js FitAddon).
+/// Without this the PTY stays at the spawn-time 24x80 and TUI apps wrap badly.
+#[tauri::command]
+pub fn resize_terminal(
+    state: State<'_, crate::commands::AppState>,
+    id: String,
+    rows: u16,
+    cols: u16,
+) -> Result<(), String> {
+    let sessions = state.terminals.sessions.lock();
+    let sess = sessions
+        .get(&id)
+        .ok_or_else(|| format!("no terminal {id}"))?;
+    sess._master
+        .resize(PtySize {
+            rows: rows.clamp(2, 500),
+            cols: cols.clamp(20, 1000),
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| format!("resize {id}: {e}"))
+}
+
 /// Kill a session's child and drop it from the registry. The reader thread will
 /// observe the PTY closing and emit `terminal://exit`.
 #[tauri::command]

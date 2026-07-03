@@ -378,6 +378,10 @@ export function makeHostApi(
         gate("terminals", "terminals.write");
         return ctrl.writeTerminal(tid, data);
       },
+      resize: (tid, rows, cols) => {
+        gate("terminals", "terminals.resize");
+        return isTauri() ? invoke("resize_terminal", { id: tid, rows, cols }) : Promise.resolve();
+      },
       kill: (tid) => {
         gate("terminals", "terminals.kill");
         return ctrl.killTerminal(tid);

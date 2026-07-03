@@ -31,6 +31,7 @@ import type {
 import { chatSeedMailbox, listTasks, toggleTask, type TaskDTO } from "../../lib/u1chat";
 import { C1Panel } from "./C1";
 import { Cockpit } from "./Cockpit";
+import { XtermView } from "./XtermView";
 
 // Dock glyph — a control board (mirrors the original reference icon).
 const ICON = `<svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="12" width="7" height="9" rx="2"/><rect x="3" y="16" width="7" height="5" rx="2"/></svg>`;
@@ -64,6 +65,7 @@ const ICONS = {
   close: "M18 6 6 18|6 6l12 12",
   spark: "M12 3v6m0 6v6m9-9h-6M9 12H3|18.4 5.6l-4.2 4.2m-4.4 4.4-4.2 4.2",
   check: "M20 6 9 17l-5-5",
+  orb: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z|M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z",
 } as const;
 
 // ── task priority → pill class (design-system .pill) ─────────────────────────
@@ -77,82 +79,6 @@ function priorityMeta(priority?: string): { cls: string; label: string } {
 // ════════════════════════════════════════════════════════════════════════════
 // Terminal pane — xterm-like view for one pty.
 // ════════════════════════════════════════════════════════════════════════════
-/**
- * Render raw PTY bytes as readable text. Local tools (e.g. `ollama run`) draw a
- * live spinner with ANSI escape + private-mode sequences (cursor hide, synced
- * output, line clears) which show up as garbage in a plain <pre>. Strip those
- * and apply carriage-return line discipline so each spinner redraw collapses to
- * its final text. General-purpose: also cleans claude/codex output.
- */
-function cleanTerminal(raw: string): string {
-  // Minimal terminal line-discipline: emulate the cursor so ANSI escapes, the
-  // private cursor/sync modes and the carriage-style redraws that `ollama run`'s
-  // spinner emits collapse to clean text — instead of raw bytes in a <pre>.
-  const lines: string[] = [];
-  let line = "";
-  let col = 0;
-  const put = (ch: string) => {
-    if (col === line.length) line += ch;
-    else line = line.slice(0, col) + ch + line.slice(col + 1);
-    col++;
-  };
-  for (let i = 0; i < raw.length; i++) {
-    const c = raw[i];
-    if (c === "\x1b") {
-      if (raw[i + 1] === "[") {
-        // CSI: ESC [ params intermediates final
-        let j = i + 2;
-        while (j < raw.length && /[0-9;?]/.test(raw[j])) j++;
-        while (j < raw.length && raw[j] >= " " && raw[j] <= "/") j++;
-        const final = raw[j];
-        const params = raw.slice(i + 2, j).replace(/\?/g, "");
-        if (final === "G")
-          col = 0; // cursor to column 1 (spinner redraw)
-        else if (final === "K")
-          line = line.slice(0, col); // erase to end of line
-        else if (final === "D")
-          col = Math.max(0, col - (parseInt(params || "1", 10) || 1));
-        else if (final === "C") col += parseInt(params || "1", 10) || 1;
-        // colours/cursor-mode (m, h, l, …) are simply dropped
-        i = j;
-        continue;
-      }
-      if (raw[i + 1] === "]") {
-        // OSC: ESC ] ... (BEL | ST)
-        let j = i + 2;
-        while (
-          j < raw.length &&
-          raw[j] !== "\x07" &&
-          !(raw[j] === "\x1b" && raw[j + 1] === "\\")
-        )
-          j++;
-        i = raw[j] === "\x1b" ? j + 1 : j;
-        continue;
-      }
-      i += 1; // other ESC + one byte
-      continue;
-    }
-    if (c === "\n") {
-      lines.push(line);
-      line = "";
-      col = 0;
-      continue;
-    }
-    if (c === "\r") {
-      col = 0;
-      continue;
-    }
-    if (c === "\t") {
-      put(" ");
-      continue;
-    }
-    if (c < " ") continue; // drop remaining control chars
-    put(c);
-  }
-  lines.push(line);
-  return lines.join("\n").replace(/[ \t]+$/gm, "");
-}
-
 function TerminalPane({
   host,
   term,
@@ -162,39 +88,13 @@ function TerminalPane({
   term: TermInfo;
   onClose: () => void;
 }) {
-  const [lines, setLines] = useState<string>("");
-  const [input, setInput] = useState("");
   const [running, setRunning] = useState(term.running);
-  const bodyRef = useRef<HTMLDivElement>(null);
 
-  // Stream output → codebox; track exit. Re-subscribes when the pty id changes.
+  // Header-Status; das eigentliche Rendering (inkl. Exit-Note) macht XtermView.
   useEffect(() => {
-    setLines("");
     setRunning(term.running);
-    const offOut = host.terminals.onOutput(term.id, (chunk) =>
-      setLines((prev) => (prev + chunk).slice(-20000))
-    );
-    const offExit = host.terminals.onExit(term.id, (code) => {
-      setRunning(false);
-      setLines((prev) => `${prev}\n\n[process exited with code ${code}]`);
-    });
-    return () => {
-      offOut();
-      offExit();
-    };
+    return host.terminals.onExit(term.id, () => setRunning(false));
   }, [host, term.id, term.running]);
-
-  // Keep the codebox pinned to the newest output.
-  useEffect(() => {
-    const el = bodyRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [lines]);
-
-  const submit = useCallback(() => {
-    const data = input;
-    setInput("");
-    void host.terminals.write(term.id, data + "\n");
-  }, [host, input, term.id]);
 
   const kill = useCallback(() => {
     void host.terminals.kill(term.id);
@@ -224,38 +124,8 @@ function TerminalPane({
         </button>
       </div>
 
-      <div className="codebox dash-codebox" ref={bodyRef}>
-        {lines ? (
-          <pre className="dash-pre">{cleanTerminal(lines)}</pre>
-        ) : (
-          <div className="dash-emptyterm">
-            <span className="spinner" />
-            Waiting for output…
-          </div>
-        )}
-      </div>
-
-      <div className="dash-terminput">
-        <input
-          className="fld dash-termfld"
-          placeholder={running ? "Type and press Enter…" : "Process exited"}
-          value={input}
-          disabled={!running}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              submit();
-            }
-          }}
-        />
-        <button
-          className="btn btn-primary minibtn dash-termsend"
-          disabled={!running}
-          onClick={submit}
-        >
-          <Svg d={ICONS.send} />
-        </button>
+      <div className="codebox dash-codebox dash-codebox-term">
+        <XtermView host={host} termId={term.id} />
       </div>
     </div>
   );
@@ -512,9 +382,12 @@ function CockpitStyle() {
 function ProjektePanel({
   projects,
   onOpen,
+  onClaude,
 }: {
   projects: ProjectInfo[];
   onOpen: (p: ProjectInfo) => void;
+  /** Startet eine echte In-App-`claude`-Session im Projekt (xterm-PTY). */
+  onClaude: (p: ProjectInfo) => void;
 }) {
   return (
     <section className="card dash-projects">
@@ -532,18 +405,33 @@ function ProjektePanel({
       ) : (
         <div className="dash-proj-list">
           {projects.map((p) => (
-            <button
+            <div
               key={p.path}
               className="dash-proj"
+              role="button"
+              tabIndex={0}
               onClick={() => onOpen(p)}
-              title={`Terminal in „${p.name}" starten`}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") onOpen(p);
+              }}
+              title={`Terminal (zsh) in „${p.name}" starten`}
             >
               <span className="dash-proj-n">{p.name}</span>
               {p.git && <span className="ck-pick-git">git</span>}
+              <button
+                className="dash-proj-claude"
+                title={`claude in „${p.name}" starten (in der App)`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClaude(p);
+                }}
+              >
+                <Svg d={ICONS.orb} />
+              </button>
               <span className="dash-proj-go">
                 <Svg d={ICONS.terminal} />
               </span>
-            </button>
+            </div>
           ))}
         </div>
       )}
@@ -818,6 +706,23 @@ function DashboardView({ host }: { host: HostApi }) {
     [host, loadTerms]
   );
 
+  // Eine echte In-App-`claude`-Session im Projekt (xterm-PTY) — der Kern des
+  // Terminal-Workspace: neue Arbeit startet IN der App statt in Terminal.app.
+  const newClaude = useCallback(
+    async (proj: ProjectInfo) => {
+      try {
+        const id = await host.terminals.spawn({ cmd: "claude", cwd: proj.path, title: `${proj.name} · claude` });
+        host.notifications.notify("Claude gestartet", proj.name);
+        await loadTerms();
+        const list = await host.terminals.list();
+        setActiveTerm(list.find((t) => t.id === id) ?? null);
+      } catch (e) {
+        host.notifications.notify("Fehler", e instanceof Error ? e.message : String(e));
+      }
+    },
+    [host, loadTerms]
+  );
+
   // Load the LOCAL answer models (the downloaded ollama ones) for "Lokal ausführen".
   useEffect(() => {
     let cancelled = false;
@@ -988,7 +893,7 @@ function DashboardView({ host }: { host: HostApi }) {
 
       <div className="dash-grid">
         <div className="dash-maincol">
-          <ProjektePanel projects={projects} onOpen={newTerminal} />
+          <ProjektePanel projects={projects} onOpen={newTerminal} onClaude={newClaude} />
           <TasksPanel
             tasks={tasks}
             loading={tasksLoading}
@@ -1141,6 +1046,13 @@ function DashStyle() {
 .dash-x .ic svg{width:15px;height:15px}
 .dash-codebox{text-align:left;margin:0;padding:14px 15px;height:340px;overflow:auto;background:var(--fill-focus);border-color:var(--line)}
 html.dark .dash-codebox{background:rgba(2,8,18,.6)}
+.dash-codebox-term{padding:0;overflow:hidden;height:460px;background:#f6f9fc}
+html.dark .dash-codebox-term{background:#0c1218}
+.dash-xterm{height:100%;width:100%}
+.dash-xterm .xterm{height:100%;padding:10px 12px}
+.dash-proj-claude{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;border:1px solid var(--line);background:none;color:var(--ink3);cursor:pointer;padding:0}
+.dash-proj-claude:hover{border-color:rgba(6,182,212,.5);color:var(--cyan-d);background:rgba(6,182,212,.08)}
+.dash-proj-claude svg{width:13px;height:13px}
 .dash-pre{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12.5px;line-height:1.55;color:var(--prose);white-space:pre-wrap;word-break:break-word;margin:0}
 .dash-terminput{display:flex;gap:9px;align-items:center}
 .dash-termfld{margin-top:0;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:13px;padding:12px 14px}

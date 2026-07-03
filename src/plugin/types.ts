@@ -268,6 +268,8 @@ export interface HostTerminals {
   onOutput(id: string, cb: (chunk: string) => void): () => void;
   /** Subscribe to the exit of one pty; returns an unsubscribe fn. */
   onExit(id: string, cb: (code: number) => void): () => void;
+  /** Resize the PTY to the emulator's rows/cols (xterm.js FitAddon). */
+  resize(id: string, rows: number, cols: number): Promise<void>;
 }
 
 export interface HostNotion {

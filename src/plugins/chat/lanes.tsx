@@ -56,9 +56,11 @@ import {
   Bubble,
   Composer,
   DateSep,
+  DropZone,
   ICONS,
   initialOf,
   isPermanent,
+  MediaGallery,
   nameOf,
   relTime,
   sleep,
@@ -139,6 +141,8 @@ export function BotConvoView(p: {
   onActivity: (botId: string, lastTs: number, lastRole: string, lastText: string) => void;
   /** An incoming (not-mine) message arrived live — index decides to notify. */
   onIncoming: (key: string, title: string, body: string, ts: number) => void;
+  /** Weiterleiten in eine Team-Convo (index zeigt den Ziel-Picker). */
+  onForward?: (f: { source: "team" | "bot" | "ki"; sourceId: string; msgId: number }) => void;
 }) {
   const { host, bot, myEmail } = p;
   const [messages, setMessages] = useState<BotMessageDTO[]>([]);
@@ -331,6 +335,7 @@ export function BotConvoView(p: {
                         sender: m.role === "bot" ? bot.name : m.sender_name || nameOf(m.sender),
                         text: m.body.slice(0, 120),
                       }),
+                    onForward: p.onForward ? () => p.onForward!({ source: "bot", sourceId: bot.id, msgId: m.id }) : undefined,
                   }}
                 />
               </div>
@@ -364,6 +369,8 @@ export function TeamConvoView(p: {
   onConvosChanged: () => void;
   onLocalRead: (convoId: string) => void;
   onIncoming: (key: string, title: string, body: string, ts: number) => void;
+  /** Weiterleiten in eine Team-Convo (index zeigt den Ziel-Picker). */
+  onForward?: (f: { source: "team" | "bot" | "ki"; sourceId: string; msgId: number }) => void;
 }) {
   const { host, convo, myEmail } = p;
   const [messages, setMessages] = useState<TeamMessageDTO[]>([]);
@@ -376,6 +383,8 @@ export function TeamConvoView(p: {
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [pinned, setPinned] = useState<{ id: number; text: string; sender: string } | null>(null);
+  const [dropped, setDropped] = useState<{ list: File[]; n: number } | null>(null);
+  const [galleryOpen, setGalleryOpen] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
   const typingTimer = useRef<number | null>(null);
   const lastTypingSent = useRef(0);
@@ -565,9 +574,10 @@ export function TeamConvoView(p: {
   const addableUsers = p.users.filter(
     (u) => u.email !== myEmail && !(convo.members ?? []).includes(u.email)
   );
+  const galleryAtts = messages.flatMap((m) => (m.deleted ? [] : m.attachments ?? []));
 
   return (
-    <>
+    <DropZone onFiles={(list) => setDropped((s) => ({ list, n: (s?.n ?? 0) + 1 }))}>
       <div className="msn-head">
         <span className={`msn-av${isGroup ? " grp" : ""}`}>
           {isGroup ? <Svg d={ICONS.group} /> : initialOf(title)}
@@ -586,6 +596,13 @@ export function TeamConvoView(p: {
           </div>
         </div>
         <div className="msn-head-actions">
+          <button
+            className={`msn-hbtn${galleryOpen ? " on" : ""}`}
+            title="Medien der Unterhaltung"
+            onClick={() => setGalleryOpen((o) => !o)}
+          >
+            <Svg d={ICONS.gallery} />
+          </button>
           <button
             className={`msn-hbtn${find !== null ? " on" : ""}`}
             title="In der Unterhaltung suchen"
@@ -716,6 +733,7 @@ export function TeamConvoView(p: {
                       setEdit(null);
                       setReply({ id: m.id, sender: nameOf(m.sender), text: (m.body || "Anhang").slice(0, 120) });
                     },
+                    onForward: p.onForward ? () => p.onForward!({ source: "team", sourceId: convo.id, msgId: m.id }) : undefined,
                     onPin: () => doPin(m.id, (m.body || "Anhang").slice(0, 120), nameOf(m.sender)),
                     ...(mine && !m.deleted
                       ? {
@@ -760,9 +778,11 @@ export function TeamConvoView(p: {
         edit={edit}
         onCancelEdit={() => setEdit(null)}
         onTyping={onTyping}
+        files={dropped}
         onSend={(text, atts) => send(text, atts)}
       />
-    </>
+      {galleryOpen && <MediaGallery host={host} atts={galleryAtts} onClose={() => setGalleryOpen(false)} />}
+    </DropZone>
   );
 }
 
@@ -787,6 +807,8 @@ export function KiThreadView(p: {
   seed: { text: string; n: number } | null;
   onThreadsChanged: () => void;
   onThreadMeta: (id: string, meta: { title?: string; color?: string; category?: string }) => void;
+  /** Weiterleiten in eine Team-Convo (index zeigt den Ziel-Picker). */
+  onForward?: (f: { source: "team" | "bot" | "ki"; sourceId: string; msgId: number }) => void;
 }) {
   const { host, thread, model } = p;
   const [messages, setMessages] = useState<ViewMsg[]>([]);
@@ -796,6 +818,8 @@ export function KiThreadView(p: {
   const [find, setFind] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [dropped, setDropped] = useState<{ list: File[]; n: number } | null>(null);
+  const [galleryOpen, setGalleryOpen] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
@@ -939,9 +963,10 @@ export function KiThreadView(p: {
   );
 
   const bodies = messages.map((m) => m.content);
+  const galleryAtts = messages.flatMap((m) => (m.deleted ? [] : m.attachments ?? []));
 
   return (
-    <>
+    <DropZone onFiles={(list) => setDropped((s) => ({ list, n: (s?.n ?? 0) + 1 }))}>
       <div className="msn-head">
         <span className="msn-av ki">
           <Svg d={ICONS.orb} />
@@ -963,6 +988,13 @@ export function KiThreadView(p: {
               </button>
             ))}
           </div>
+          <button
+            className={`msn-hbtn${galleryOpen ? " on" : ""}`}
+            title="Medien des Strangs"
+            onClick={() => setGalleryOpen((o) => !o)}
+          >
+            <Svg d={ICONS.gallery} />
+          </button>
           <button
             className={`msn-hbtn${find !== null ? " on" : ""}`}
             title="Im Strang suchen"
@@ -1047,6 +1079,7 @@ export function KiThreadView(p: {
                               text: m.content.slice(0, 120),
                             });
                           },
+                          onForward: p.onForward ? () => p.onForward!({ source: "ki", sourceId: thread.id, msgId: m.id! }) : undefined,
                           ...(mine && !m.deleted
                             ? {
                                 onEdit: () => {
@@ -1085,8 +1118,10 @@ export function KiThreadView(p: {
         edit={edit}
         onCancelEdit={() => setEdit(null)}
         seed={p.seed}
+        files={dropped}
         onSend={(text, atts) => send(text, atts)}
       />
-    </>
+      {galleryOpen && <MediaGallery host={host} atts={galleryAtts} onClose={() => setGalleryOpen(false)} />}
+    </DropZone>
   );
 }

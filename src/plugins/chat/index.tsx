@@ -31,14 +31,17 @@ import {
   chatSeedMailbox,
   createConvo,
   createThread,
+  forwardMessage,
   getMe,
   isOnline,
   listBots,
   listConvos,
   listTeamUsers,
   listThreads,
+  searchMessages,
   setPresence,
   type BotDTO,
+  type SearchHitsDTO,
   type TeamConvoDTO,
   type TeamUserDTO,
   type ThreadDTO,
@@ -81,6 +84,41 @@ function MessengerView({ host }: { host: HostApi }) {
   const [groupDlg, setGroupDlg] = useState(false);
   const [groupTitle, setGroupTitle] = useState("");
   const [groupSel, setGroupSel] = useState<Set<string>>(new Set());
+  const [hits, setHits] = useState<SearchHitsDTO | null>(null);
+  const [fwd, setFwd] = useState<{ source: "team" | "bot" | "ki"; sourceId: string; msgId: number } | null>(null);
+  // Suche + Weiterleiten kamen im selben Backend-Deploy — eine Probe (q="" → 200
+  // auf neuem Backend, 404 auf altem) schaltet beide Features frei.
+  const [msgCaps, setMsgCaps] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    searchMessages(host, "")
+      .then(() => alive && setMsgCaps(true))
+      .catch(() => alive && setMsgCaps(false));
+    return () => {
+      alive = false;
+    };
+  }, [host]);
+
+  // Globale Nachrichten-Suche: debounced gegen /api/search; ein 404 (Backend
+  // noch nicht deployt) blendet die Sektion einfach aus.
+  useEffect(() => {
+    const q = query.trim();
+    if (!msgCaps || q.length < 2) {
+      setHits(null);
+      return;
+    }
+    let alive = true;
+    const t = window.setTimeout(() => {
+      searchMessages(host, q)
+        .then((h) => alive && setHits(h))
+        .catch(() => alive && setHits(null));
+    }, 300);
+    return () => {
+      alive = false;
+      window.clearTimeout(t);
+    };
+  }, [host, query, msgCaps]);
 
   const activeKeyRef = useRef<string | null>(null);
   activeKeyRef.current = activeKey;
@@ -573,6 +611,52 @@ function MessengerView({ host }: { host: HostApi }) {
             ))}
           </div>
         )}
+
+        {hits && hits.team.length + hits.threads.length + hits.bots.length > 0 && (
+          <div className="msn-hits">
+            <div className="msn-hits-h">Nachrichten</div>
+            {hits.team.map((h) => {
+              const c = convos.find((x) => x.id === h.convo_id);
+              const title = c ? (c.kind === "group" ? c.title || "Gruppe" : c.other_name || nameOf(c.other || "")) : "Unterhaltung";
+              return (
+                <button key={`ht-${h.msg_id}`} className="msn-hit" onClick={() => setActiveKey(`team:${h.convo_id}`)}>
+                  <span className="msn-hit-top">
+                    <b>{title}</b>
+                    <span>{relTime(h.created_at)}</span>
+                  </span>
+                  <span className="msn-hit-sn">
+                    {nameOf(h.sender)}: {h.snippet}
+                  </span>
+                </button>
+              );
+            })}
+            {hits.bots.map((h) => {
+              const b = bots.find((x) => x.id === h.bot_id);
+              return (
+                <button key={`hb-${h.msg_id}`} className="msn-hit" onClick={() => setActiveKey(`bot:${h.bot_id}`)}>
+                  <span className="msn-hit-top">
+                    <b>{b?.name || h.bot_id}</b>
+                    <span>{relTime(h.created_at)}</span>
+                  </span>
+                  <span className="msn-hit-sn">
+                    {h.role === "bot" ? "u1" : h.sender_name || nameOf(h.sender)}: {h.snippet}
+                  </span>
+                </button>
+              );
+            })}
+            {hits.threads.map((h) => (
+              <button key={`hk-${h.msg_id}`} className="msn-hit" onClick={() => setActiveKey(`ki:${h.thread_id}`)}>
+                <span className="msn-hit-top">
+                  <b>{h.title || "KI-Strang"}</b>
+                  <span>{relTime(h.created_at)}</span>
+                </span>
+                <span className="msn-hit-sn">
+                  {h.role === "assistant" ? "u1" : "Du"}: {h.snippet}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
       </aside>
 
       {/* ── conversation ── */}
@@ -585,6 +669,7 @@ function MessengerView({ host }: { host: HostApi }) {
             myEmail={myEmail}
             onActivity={onBotActivity}
             onIncoming={onIncoming}
+            onForward={msgCaps ? setFwd : undefined}
           />
         ) : activeConvo ? (
           <TeamConvoView
@@ -596,6 +681,7 @@ function MessengerView({ host }: { host: HostApi }) {
             onConvosChanged={onConvosChanged}
             onLocalRead={onLocalRead}
             onIncoming={onIncoming}
+            onForward={msgCaps ? setFwd : undefined}
           />
         ) : activeThread ? (
           <KiThreadView
@@ -607,6 +693,7 @@ function MessengerView({ host }: { host: HostApi }) {
             seed={seed}
             onThreadsChanged={onConvosChanged}
             onThreadMeta={onThreadMeta}
+            onForward={msgCaps ? setFwd : undefined}
           />
         ) : (
           <div className="msn-conv-blank">
@@ -632,6 +719,42 @@ function MessengerView({ host }: { host: HostApi }) {
       )}
 
       {/* ── group dialog ── */}
+      {fwd && (
+        <div className="msn-overlay" onClick={() => setFwd(null)}>
+          <div className="msn-dialog" onClick={(e) => e.stopPropagation()}>
+            <h3>Weiterleiten an…</h3>
+            <div className="msn-dlg-users">
+              {convos.map((c) => {
+                const label = c.kind === "group" ? c.title || "Gruppe" : c.other_name || nameOf(c.other || "");
+                return (
+                  <button
+                    key={c.id}
+                    className="msn-dlg-u"
+                    onClick={() => {
+                      const f = fwd;
+                      setFwd(null);
+                      void forwardMessage(host, c.id, f.source, f.sourceId, f.msgId)
+                        .then(() => setActiveKey(`team:${c.id}`))
+                        .catch((e) => setError(authHint(e)));
+                    }}
+                  >
+                    <span className={`msn-av sm${c.kind === "group" ? " grp" : ""}`}>
+                      {c.kind === "group" ? <Svg d={ICONS.group} /> : initialOf(label)}
+                    </span>
+                    <span>{label}</span>
+                  </button>
+                );
+              })}
+              {convos.length === 0 && (
+                <div className="msn-rail-empty">
+                  <span>Keine Team-Unterhaltungen — erst eine Unterhaltung starten.</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {groupDlg && (
         <div className="msn-overlay" onClick={() => setGroupDlg(false)}>
           <div className="msn-dialog" onClick={(e) => e.stopPropagation()}>

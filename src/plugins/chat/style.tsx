@@ -112,6 +112,31 @@ html.dark .msn-presence{border-color:#0b1220}
 .msn-msg.me .msn-bubble{background:linear-gradient(160deg,#22d3ee,#06b6d4);color:#fff;border-bottom-right-radius:5px}
 .msn-body mark{background:rgba(250,204,21,.55);color:inherit;border-radius:3px;padding:0 1px}
 .msn-body.md{display:block;min-width:0}
+
+/* ── DropZone (Dateien in die Unterhaltung ziehen) ── */
+.msn-drop{position:relative;display:flex;flex-direction:column;flex:1;min-height:0;height:100%}
+.msn-drop-hint{position:absolute;inset:8px;z-index:30;display:flex;align-items:center;justify-content:center;gap:10px;border:2px dashed var(--cyan,#22d3ee);border-radius:14px;background:color-mix(in srgb, var(--cyan,#22d3ee) 10%, transparent);font-weight:650;pointer-events:none;backdrop-filter:blur(2px)}
+.msn-drop-ic{display:inline-flex;width:22px;height:22px}
+.msn-drop-ic svg{width:22px;height:22px}
+
+/* ── Globale Suche: Nachrichten-Treffer im Rail ── */
+.msn-hits{display:flex;flex-direction:column;gap:2px;margin-top:10px;padding-top:8px;border-top:1px solid var(--line)}
+.msn-hits-h{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);padding:0 8px 4px}
+.msn-hit{display:flex;flex-direction:column;gap:2px;text-align:left;background:none;border:none;border-radius:10px;padding:7px 8px;cursor:pointer;color:inherit;font:inherit;min-width:0}
+.msn-hit:hover{background:var(--fill)}
+.msn-hit-top{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12.5px}
+.msn-hit-top b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.msn-hit-top span{font-size:10px;color:var(--ink3);flex:none}
+.msn-hit-sn{font-size:11.5px;color:var(--ink3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ── MediaGallery (Medien der Unterhaltung, Overlay) ── */
+.msn-gallery{position:absolute;top:62px;right:10px;bottom:76px;width:min(340px,80%);z-index:25;display:flex;flex-direction:column;gap:10px;padding:12px;border:1px solid var(--line);border-radius:14px;background:var(--glass2,var(--fill-strong));backdrop-filter:blur(18px) saturate(1.2);box-shadow:var(--shadow);overflow-y:auto}
+.msn-gallery-head{display:flex;align-items:center;gap:8px}
+.msn-gallery-head b{font-size:13.5px}
+.msn-gallery-n{flex:1;font-size:11px;color:var(--ink3);min-width:0}
+.msn-gallery-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.msn-gallery-grid .msn-att-img{width:100%;height:88px;object-fit:cover;border-radius:8px;margin:0}
+.msn-gallery-list{display:flex;flex-direction:column;gap:6px}
 .msn-deleted{opacity:.6}
 .msn-meta{display:inline-flex;align-items:center;gap:5px;font-size:10px;opacity:.72;margin-left:8px;vertical-align:bottom;white-space:nowrap;float:right;margin-top:8px}
 .msn-msg.them .msn-meta{color:var(--ink3);opacity:1}

@@ -40,7 +40,9 @@ export const Svg = (props: { d: string; w?: number }) => (
     strokeLinejoin="round"
   >
     {props.d.split("|").map((p, i) => (
-      <path key={i} d={p} />
+      // Segmente ohne führendes moveto sind ungültig und werden still NICHT
+      // gezeichnet — implizites M ergänzen (Segmente sind als Startpunkte gemeint).
+      <path key={i} d={/^\s*[Mm]/.test(p) ? p : `M${p}`} />
     ))}
   </svg>
 );
@@ -49,6 +51,7 @@ export const ICONS = {
   send: "M22 2 11 13|22 2l-7 20-4-9-9-4 20-7Z",
   plus: "M12 5v14M5 12h14",
   reply: "M9 17l-5-5 5-5|4 12h11a5 5 0 0 1 5 5v2",
+  forward: "M15 17l5-5-5-5|M20 12H9a5 5 0 0 0-5 5v2",
   edit: "M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3Z",
   trash: "M3 6h18|8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2|19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6",
   pin: "M12 17v5|9 10.8 5.7 14a1 1 0 0 0 .7 1.7h11.2a1 1 0 0 0 .7-1.7L15 10.8V5l1-2H8l1 2v5.8Z",
@@ -67,6 +70,8 @@ export const ICONS = {
     "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2|9 7m-4 0a4 4 0 1 0 8 0a4 4 0 1 0-8 0|23 21v-2a4 4 0 0 0-3-3.87|16 3.13a4 4 0 0 1 0 7.75",
   orb: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z|12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z",
   play: "M8 5v14l11-7Z",
+  gallery:
+    "M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5Z|M9 11a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z|M21 15l-4.5-4.5L6 21",
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -227,6 +232,7 @@ export function AttachmentView({ host, att }: { host: HostApi; att: AttachmentDT
 export interface BubbleActions {
   onReact?: (emoji: string) => void;
   onReply?: () => void;
+  onForward?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
   onPin?: () => void;
@@ -332,6 +338,18 @@ export function Bubble(p: BubbleProps) {
                   <Svg d={ICONS.reply} />
                 </button>
               )}
+              {a?.onForward && (
+                <button
+                  className="msn-act"
+                  title="Weiterleiten"
+                  onClick={() => {
+                    setPickOpen(false);
+                    a.onForward!();
+                  }}
+                >
+                  <Svg d={ICONS.forward} />
+                </button>
+              )}
               {a?.onPin && (
                 <button className="msn-act" title="Anpinnen" onClick={() => a.onPin!()}>
                   <Svg d={ICONS.pin} />
@@ -406,6 +424,95 @@ export function DateSep({ ts }: { ts: number }) {
   return (
     <div className="msn-datesep">
       <span>{dayLabel(ts)}</span>
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// DropZone — wraps a whole conversation lane; dropped files land in the
+// Composer via the `files` mailbox prop (n bumps per drop).
+// ════════════════════════════════════════════════════════════════════════════
+
+const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+
+export function DropZone(p: {
+  disabled?: boolean;
+  onFiles: (files: File[]) => void;
+  children: React.ReactNode;
+}) {
+  const [over, setOver] = useState(false);
+  const depth = useRef(0);
+  return (
+    <div
+      className="msn-drop"
+      onDragEnter={(e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        depth.current++;
+        setOver(true);
+      }}
+      onDragOver={(e) => {
+        if (hasFiles(e)) e.preventDefault();
+      }}
+      onDragLeave={(e) => {
+        if (!hasFiles(e)) return;
+        depth.current = Math.max(0, depth.current - 1);
+        if (depth.current === 0) setOver(false);
+      }}
+      onDrop={(e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        depth.current = 0;
+        setOver(false);
+        if (!p.disabled && e.dataTransfer.files.length) p.onFiles(Array.from(e.dataTransfer.files));
+      }}
+    >
+      {p.children}
+      {over && !p.disabled && (
+        <div className="msn-drop-hint">
+          <span className="msn-drop-ic">
+            <Svg d={ICONS.attach} />
+          </span>
+          Dateien hier ablegen
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// MediaGallery — all media of the loaded conversation window (images as grid,
+// audio + files as list). Read-only; uses the same authenticated blob fetch.
+// ════════════════════════════════════════════════════════════════════════════
+
+export function MediaGallery(p: { host: HostApi; atts: AttachmentDTO[]; onClose: () => void }) {
+  const images = p.atts.filter((a) => a.kind === "image");
+  const rest = p.atts.filter((a) => a.kind !== "image");
+  return (
+    <div className="msn-gallery">
+      <div className="msn-gallery-head">
+        <b>Medien</b>
+        <span className="msn-gallery-n">
+          {p.atts.length ? `${p.atts.length} im geladenen Verlauf` : "Keine Medien im geladenen Verlauf"}
+        </span>
+        <button className="msn-hbtn" onClick={p.onClose} title="Galerie schließen">
+          <Svg d={ICONS.x} />
+        </button>
+      </div>
+      {images.length > 0 && (
+        <div className="msn-gallery-grid">
+          {images.map((a) => (
+            <AttachmentView key={a.id} host={p.host} att={a} />
+          ))}
+        </div>
+      )}
+      {rest.length > 0 && (
+        <div className="msn-gallery-list">
+          {rest.map((a) => (
+            <AttachmentView key={a.id} host={p.host} att={a} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -491,6 +598,8 @@ export interface ComposerProps {
   onCancelEdit?: () => void;
   /** Externally seeded draft (cockpit chat:seed); consumed once per change. */
   seed?: { text: string; n: number } | null;
+  /** Externally dropped files (DropZone); consumed once per bump of n. */
+  files?: { list: File[]; n: number } | null;
   onTyping?: () => void;
   /** Resolve `false` to signal a failed send so the composer restores the draft. */
   onSend: (text: string, atts: SendAttachment[]) => boolean | void | Promise<boolean | void>;
@@ -527,6 +636,15 @@ export function Composer(p: ComposerProps) {
     }
   }, [p.seed]);
 
+  // Files dropped onto the surrounding DropZone — n bumps per drop.
+  useEffect(() => {
+    if (p.files && p.allowAttach && !p.disabled) {
+      pickFiles(p.files.list);
+      taRef.current?.focus();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.files?.n]);
+
   // Entering edit mode stashes the current draft + loads the message text; the
   // stash is restored by the cancel handler (Escape / ✕), not here.
   useEffect(() => {
@@ -562,7 +680,7 @@ export function Composer(p: ComposerProps) {
   );
 
   const pickFiles = useCallback(
-    (files: FileList | null) => {
+    (files: FileList | File[] | null) => {
       if (!files) return;
       for (const f of Array.from(files).slice(0, 10)) {
         const kind = f.type.startsWith("image/") ? "image" : f.type.startsWith("audio/") ? "audio" : "file";
@@ -742,6 +860,24 @@ export function Composer(p: ComposerProps) {
               if (e.key === "Escape") {
                 if (p.edit) cancelEdit();
                 else if (p.reply) p.onCancelReply?.();
+              }
+            }}
+            onPaste={(e) => {
+              if (!p.allowAttach || p.disabled) return;
+              // Bilder/Dateien aus der Zwischenablage (Screenshot-Paste) → Upload-Queue.
+              const files = Array.from(e.clipboardData?.items ?? [])
+                .filter((it) => it.kind === "file")
+                .map((it) => it.getAsFile())
+                .filter((f): f is File => !!f);
+              if (files.length) {
+                e.preventDefault();
+                pickFiles(
+                  files.map((f, i) =>
+                    f.name && f.name !== "image.png"
+                      ? f
+                      : new File([f], `einfuegen-${Date.now()}${i ? `-${i}` : ""}.${(f.type.split("/")[1] || "png").split("+")[0]}`, { type: f.type })
+                  )
+                );
               }
             }}
           />

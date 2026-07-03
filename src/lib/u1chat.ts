@@ -234,6 +234,29 @@ export async function* streamThreadMessage(
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// Globale Nachrichten-Suche (Rail)
+// ════════════════════════════════════════════════════════════════════════════
+
+export interface SearchHitsDTO {
+  team: { msg_id: number; convo_id: string; sender: string; snippet: string; created_at: number }[];
+  threads: { msg_id: number; thread_id: string; role: string; snippet: string; created_at: number; title?: string }[];
+  bots: { msg_id: number; bot_id: string; role: string; sender: string; sender_name?: string; snippet: string; created_at: number }[];
+}
+
+/** Server-seitige Suche über alle Unterhaltungen des Users (Backend 🔜 bis zum nächsten u1-chat-Deploy). */
+export const searchMessages = (host: HostApi, q: string) =>
+  getJSON<SearchHitsDTO>(host, `/api/search?q=${encodeURIComponent(q)}`);
+
+/** Nachricht server-seitig in eine Team-Convo weiterleiten (Anhänge werden dort re-verlinkt). */
+export const forwardMessage = (
+  host: HostApi,
+  targetConvoId: string,
+  source: "team" | "bot" | "ki",
+  sourceId: string,
+  msgId: number
+) => sendJSON<TeamMessageDTO>(host, "POST", `/api/team/convos/${targetConvoId}/forward`, { source, source_id: sourceId, msg_id: msgId });
+
+// ════════════════════════════════════════════════════════════════════════════
 // Tasks + projects (real, replaces the old Notion placeholder)
 // ════════════════════════════════════════════════════════════════════════════
 

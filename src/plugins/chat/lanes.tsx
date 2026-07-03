@@ -797,6 +797,15 @@ interface ViewMsg extends MessageDTO {
 const MODELS: { id: string; label: string }[] = [
   { id: "opus", label: "Opus" },
   { id: "sonnet", label: "Sonnet" },
+  { id: "haiku", label: "Haiku" },
+];
+
+/** Effort-Stufen — 1:1 die Server-Allowlist (VALID_EFFORT) und die iOS-Auswahl. */
+const EFFORTS: { id: string; label: string }[] = [
+  { id: "low", label: "Low" },
+  { id: "medium", label: "Medium" },
+  { id: "high", label: "High" },
+  { id: "max", label: "Max" },
 ];
 
 export function KiThreadView(p: {
@@ -804,6 +813,8 @@ export function KiThreadView(p: {
   thread: ThreadDTO;
   model: string;
   onPickModel: (m: string) => void;
+  effort: string;
+  onPickEffort: (e: string) => void;
   seed: { text: string; n: number } | null;
   onThreadsChanged: () => void;
   onThreadMeta: (id: string, meta: { title?: string; color?: string; category?: string }) => void;
@@ -905,7 +916,7 @@ export function KiThreadView(p: {
           {
             content: text,
             model,
-            effort: "high",
+            effort: p.effort,
             ...(replyTo ? { reply_to: replyTo } : {}),
             ...(atts.length ? { attachment_ids: atts.map((a) => a.id) } : {}),
           },
@@ -950,7 +961,7 @@ export function KiThreadView(p: {
       // Optimistic user turn is already rendered → keep the composer cleared.
       return true;
     },
-    [host, thread.id, model, sending, reply, edit, loadThread]
+    [host, thread.id, model, p.effort, sending, reply, edit, loadThread]
   );
 
   const react = useCallback(
@@ -1019,6 +1030,20 @@ export function KiThreadView(p: {
                 <Svg d={ICONS.trash} />
                 <span className="n">Strang archivieren</span>
               </button>
+              <div className="msn-menu-sect">Effort (neue Antworten)</div>
+              {EFFORTS.map((e) => (
+                <button
+                  key={e.id}
+                  className="msn-menu-i"
+                  onClick={() => {
+                    p.onPickEffort(e.id);
+                    setMenuOpen(false);
+                  }}
+                >
+                  <span className={`msn-menu-radio${p.effort === e.id ? " on" : ""}`} />
+                  <span className="n">{e.label}</span>
+                </button>
+              ))}
             </div>
           )}
         </div>

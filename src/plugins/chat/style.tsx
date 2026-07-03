@@ -119,6 +119,11 @@ html.dark .msn-presence{border-color:#0b1220}
 .msn-drop-ic{display:inline-flex;width:22px;height:22px}
 .msn-drop-ic svg{width:22px;height:22px}
 
+/* ── Menü-Zusätze (Effort-Radio im Strang-Menü) ── */
+.msn-menu-sect{font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);padding:7px 10px 3px;border-top:1px solid var(--line);margin-top:4px}
+.msn-menu-radio{display:inline-block;width:12px;height:12px;border-radius:50%;border:1.5px solid var(--line2,var(--line));flex:none}
+.msn-menu-radio.on{border-color:var(--cyan,#0891b2);box-shadow:inset 0 0 0 3px var(--cyan,#0891b2)}
+
 /* ── Globale Suche: Nachrichten-Treffer im Rail ── */
 .msn-hits{display:flex;flex-direction:column;gap:2px;margin-top:10px;padding-top:8px;border-top:1px solid var(--line)}
 .msn-hits-h{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);padding:0 8px 4px}

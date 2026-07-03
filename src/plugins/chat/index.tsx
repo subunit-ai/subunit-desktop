@@ -54,6 +54,7 @@ const ICON = `<svg viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-12 7.6L3 
 
 const STORE_ACTIVE = "activeItem";
 const STORE_MODEL = "model";
+const STORE_EFFORT = "effort";
 const STORE_BOTREAD = "botRead";
 
 type Filter = "all" | "bots" | "team" | "ki";
@@ -78,6 +79,7 @@ function MessengerView({ host }: { host: HostApi }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [model, setModel] = useState("opus");
+  const [effort, setEffort] = useState("high");
   const [botRead, setBotRead] = useState<Record<string, number>>({});
   const [seed, setSeed] = useState<{ text: string; n: number } | null>(null);
   const [newOpen, setNewOpen] = useState(false);
@@ -213,13 +215,15 @@ function MessengerView({ host }: { host: HostApi }) {
         setMyEmail(me.email);
         myEmailRef.current = me.email;
         void setPresence(host, nameOf(me.email)).catch(() => {});
-        const [savedModel, savedActive, savedRead] = await Promise.all([
+        const [savedModel, savedEffort, savedActive, savedRead] = await Promise.all([
           host.storage.get(STORE_MODEL),
+          host.storage.get(STORE_EFFORT),
           host.storage.get(STORE_ACTIVE),
           host.storage.get(STORE_BOTREAD),
         ]);
         if (!alive) return;
         if (typeof savedModel === "string") setModel(savedModel);
+        if (typeof savedEffort === "string") setEffort(savedEffort);
         if (savedRead && typeof savedRead === "object") setBotRead(savedRead as Record<string, number>);
         await refreshAll();
         if (!alive) return;
@@ -329,6 +333,14 @@ function MessengerView({ host }: { host: HostApi }) {
     (m: string) => {
       setModel(m);
       void host.storage.set(STORE_MODEL, m);
+    },
+    [host]
+  );
+
+  const pickEffort = useCallback(
+    (e: string) => {
+      setEffort(e);
+      void host.storage.set(STORE_EFFORT, e);
     },
     [host]
   );
@@ -690,6 +702,8 @@ function MessengerView({ host }: { host: HostApi }) {
             thread={activeThread}
             model={model}
             onPickModel={pickModel}
+            effort={effort}
+            onPickEffort={pickEffort}
             seed={seed}
             onThreadsChanged={onConvosChanged}
             onThreadMeta={onThreadMeta}

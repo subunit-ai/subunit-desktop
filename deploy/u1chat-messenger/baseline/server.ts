@@ -61,6 +61,39 @@ const DEFAULT_MODEL = ALLOWED_MODELS.has(configuredDefaultModel)
   ? configuredDefaultModel
   : (ALLOWED_MODELS.has("sonnet") ? "sonnet" : String(ALLOWED_MODELS.values().next().value));
 
+// Cloud-RAG: memory-agent (:8001, ChromaDB/bge-m3) liefert relevante u1-Erinnerungen
+// als Kontextblock vor den Prompt — damit ist jeder KI-Thread „u1 mit Gedächtnis",
+// auf allen Geräten (iOS inklusive). Best-effort: Timeout/Fehler → kein Kontext,
+// NIE eine blockierte Antwort. Abschaltbar via U1_CHAT_MEMORY_OFF=1.
+const MEMORY_URL = String(process.env.U1_CHAT_MEMORY_URL || "http://127.0.0.1:8001").replace(/\/$/, "");
+const MEMORY_OFF = process.env.U1_CHAT_MEMORY_OFF === "1";
+
+async function retrieveMemory(query: string): Promise<string> {
+  if (MEMORY_OFF || !query.trim()) return "";
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 3500);
+    const res = await fetch(`${MEMORY_URL}/search`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query: query.slice(0, 500), n_results: 5 }),
+      signal: ctrl.signal,
+    });
+    clearTimeout(t);
+    if (!res.ok) return "";
+    const data: any = await res.json();
+    const items: string[] = (Array.isArray(data?.results) ? data.results : [])
+      .map((r: any) => String(r?.text || "").trim())
+      .filter((s: string) => s.length > 0)
+      .slice(0, 5)
+      .map((s: string) => `- ${s.slice(0, 600)}`);
+    if (!items.length) return "";
+    return `[Kontext aus dem u1-Gedächtnis — nur nutzen, wenn er zur Frage passt; nicht erwähnen, wenn irrelevant]\n${items.join("\n")}\n[Ende Kontext]`;
+  } catch {
+    return "";
+  }
+}
+
 const MAX_LOGIN_BODY_BYTES = intEnv("U1_CHAT_MAX_LOGIN_BODY_BYTES", 4096);
 const MAX_THREAD_BODY_BYTES = intEnv("U1_CHAT_MAX_THREAD_BODY_BYTES", 2048);
 const MAX_MESSAGE_BODY_BYTES = intEnv("U1_CHAT_MAX_MESSAGE_BODY_BYTES", 64 * 1024);
@@ -799,7 +832,10 @@ async function handle(req: Request): Promise<Response> {
     if (!content && !atts.length) return json({ error: "empty" }, 400); // leer bzw. ids gehören dem User nicht
     const attMeta = atts.map((a: any) => ({ id: a.id, kind: a.kind, name: a.name }));
     const manifest = atts.map((a: any) => `[Anhang ${a.kind}: ${a.path}]`).join("\n");
-    const promptForClaude = [manifest, content].filter(Boolean).join("\n\n");
+    // Cloud-RAG: Gedächtnis-Kontext VOR dem Stream-Start holen (best-effort, ≤3,5s) —
+    // der SSE-Response geht danach sofort raus, claude bekommt Kontext+Anhänge+Frage.
+    const memoryCtx = await retrieveMemory(content);
+    const promptForClaude = [memoryCtx, manifest, content].filter(Boolean).join("\n\n");
 
     const streamLimit = acquireStream(sess.email);
     if (streamLimit) return streamLimit;

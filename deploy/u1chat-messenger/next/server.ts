@@ -20,7 +20,7 @@ import { setPin, renameConvo, addConvoMember, removeConvoMember, getTeamMessageB
 import { getAttachmentById, linkAttachment, mediaSharedWithMember } from "./db.ts";
 import { setRead, unreadCount, otherReadId } from "./db.ts";
 import { searchMessages, getTeamMessage, getBotMessage, getThreadMessage } from "./db.ts";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
 import { streamClaude, classify } from "./claude.ts";
 import { emailInbound, emailRoutes } from "./email.ts";
@@ -68,8 +68,26 @@ const DEFAULT_MODEL = ALLOWED_MODELS.has(configuredDefaultModel)
 const MEMORY_URL = String(process.env.U1_CHAT_MEMORY_URL || "http://127.0.0.1:8001").replace(/\/$/, "");
 const MEMORY_OFF = process.env.U1_CHAT_MEMORY_OFF === "1";
 
+// ollama wird vom Idle-Stop-Cron nach 10min Ruhe gestoppt (RAM-Sparen); der
+// Server-Reflex ollama-ensure.sh startet ihn on-demand und hält ihn per Touchfile
+// warm. Fire-and-forget: die erste Frage nach Kaltstart läuft ggf. ohne Kontext,
+// die Folgefragen sitzen. Ohne Script (fremde Umgebung) → stiller No-Op.
+const MEMORY_ENSURE = String(
+  process.env.U1_CHAT_MEMORY_ENSURE ??
+    join(process.env.HOME || "", "subunit/unitone/workspace/scripts/ollama-ensure.sh"),
+);
+const MEMORY_ENSURE_OK = MEMORY_ENSURE !== "" && existsSync(MEMORY_ENSURE);
+
+function wakeEmbeddings(): void {
+  if (!MEMORY_ENSURE_OK) return;
+  try {
+    Bun.spawn(["bash", MEMORY_ENSURE], { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).unref();
+  } catch {}
+}
+
 async function retrieveMemory(query: string): Promise<string> {
   if (MEMORY_OFF || !query.trim()) return "";
+  wakeEmbeddings();
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 3500);

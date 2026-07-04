@@ -85,6 +85,14 @@ function wakeEmbeddings(): void {
   } catch {}
 }
 
+// Diktat: Audio → Text über die lokale Echo-transcribe-api (gleicher Host, :8005).
+// Auth dort via Operator-Key (U1_CHAT_TRANSCRIBE_KEY, deploy.sh übernimmt ihn aus
+// dem transcribe-api-Container). Ohne Key antwortet die Route 503 — die Clients
+// blenden Diktat per Capability-Probe (POST ohne Datei ⇒ 400 = verfügbar) aus.
+const TRANSCRIBE_URL = String(process.env.U1_CHAT_TRANSCRIBE_URL || "http://127.0.0.1:8005/v1/transcribe");
+const TRANSCRIBE_KEY = String(process.env.U1_CHAT_TRANSCRIBE_KEY || "");
+const MAX_TRANSCRIBE_BYTES = intEnv("U1_CHAT_MAX_TRANSCRIBE_BYTES", 24 * 1024 * 1024);
+
 async function retrieveMemory(query: string): Promise<string> {
   if (MEMORY_OFF || !query.trim()) return "";
   wakeEmbeddings();
@@ -966,6 +974,46 @@ async function handle(req: Request): Promise<Response> {
     writeFileSync(filePath, bytes);
     addAttachment(id, sess.email, kind, file.name || (id + ext), filePath, bytes.length);
     return json({ id, kind, name: file.name || (id + ext) });
+  }
+
+  // --- Diktat: Audio → Text (Proxy zur lokalen Echo-transcribe-api) ---
+  if (path === "/api/transcribe" && req.method === "POST") {
+    if (!TRANSCRIBE_KEY) return json({ error: "transcribe_unconfigured" }, 503);
+    const lim = rateLimit(`transcribe:user:${sess.email}`, 30, 60 * 1000);
+    if (lim) return lim;
+    let form: FormData;
+    try { form = await req.formData(); } catch { return json({ error: "bad_form" }, 400); }
+    const file = form.get("file");
+    if (!(file instanceof File)) return json({ error: "no_file" }, 400);
+    if (file.size > MAX_TRANSCRIBE_BYTES) return json({ error: "payload_too_large" }, 413);
+    const language = String(form.get("language") || "de").slice(0, 8);
+    const out = new FormData();
+    // Dateiname steuert das Format-Routing der transcribe-api — nur bekannte
+    // Audio-Endungen durchlassen, sonst als WAV deklarieren (Client schickt WAV).
+    out.append("file", file, /\.(wav|ogg|m4a|mp3|webm|flac)$/i.test(file.name) ? file.name : "diktat.wav");
+    out.append("language", language);
+    out.append("quality_mode", "quality");
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 90_000);
+      const res = await fetch(TRANSCRIBE_URL, {
+        method: "POST",
+        headers: { "x-api-key": TRANSCRIBE_KEY },
+        body: out,
+        signal: ctrl.signal,
+      });
+      clearTimeout(t);
+      if (!res.ok) {
+        console.error("transcribe_upstream_status", res.status);
+        return json({ error: "transcribe_failed" }, 502);
+      }
+      const data: any = await res.json();
+      const text = String(data?.text || "").trim();
+      return json({ text });
+    } catch (e) {
+      console.error("transcribe_error", redactLog(e));
+      return json({ error: "transcribe_failed" }, 502);
+    }
   }
 
   // ===== HOME: Projekte (read-only, aus dem SPS-Register) =====

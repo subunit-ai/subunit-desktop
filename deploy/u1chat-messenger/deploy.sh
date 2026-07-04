@@ -102,6 +102,17 @@ grep -q '^U1_CHAT_BOT_INGEST_SECRET=' "$DIR/.env" \
 grep -q '^U1_CHAT_EXTRA_EMAILS=' "$DIR/.env" \
   || printf 'U1_CHAT_EXTRA_EMAILS=dirk.jedlitschka@idolz.com\n' >> "$DIR/.env" \
   || rollback ".env extra-emails append"
+# Diktat: Operator-Key der transcribe-api übernehmen (Wert wird NIE ausgegeben);
+# fehlt er, bleibt /api/transcribe auf 503 und die Clients blenden Diktat aus.
+if ! grep -q '^U1_CHAT_TRANSCRIBE_KEY=' "$DIR/.env"; then
+  TK="$(docker exec transcribe-api printenv TRANSCRIBE_API_KEY 2>/dev/null || true)"
+  if [ -n "$TK" ]; then
+    printf 'U1_CHAT_TRANSCRIBE_KEY=%s\n' "$TK" >> "$DIR/.env" || rollback ".env transcribe-key append"
+    echo "✅ (e) U1_CHAT_TRANSCRIBE_KEY aus transcribe-api übernommen"
+  else
+    echo "⚠️ (e) TRANSCRIBE_API_KEY nicht ermittelbar — Diktat bleibt deaktiviert (503)"
+  fi
+fi
 echo "✅ (e) .env-Keys vorhanden/ergänzt"
 # (f) Restart
 systemctl --user restart unitone-chat || rollback "restart"

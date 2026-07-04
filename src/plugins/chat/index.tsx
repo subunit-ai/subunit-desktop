@@ -39,6 +39,7 @@ import {
   listTeamUsers,
   listThreads,
   searchMessages,
+  transcribeCapable,
   setPresence,
   type BotDTO,
   type SearchHitsDTO,
@@ -91,12 +92,17 @@ function MessengerView({ host }: { host: HostApi }) {
   // Suche + Weiterleiten kamen im selben Backend-Deploy — eine Probe (q="" → 200
   // auf neuem Backend, 404 auf altem) schaltet beide Features frei.
   const [msgCaps, setMsgCaps] = useState(false);
+  // Diktat separat proben: Route UND transcribe-api-Key müssen am Server stehen.
+  const [dictateCap, setDictateCap] = useState(false);
 
   useEffect(() => {
     let alive = true;
     searchMessages(host, "")
       .then(() => alive && setMsgCaps(true))
       .catch(() => alive && setMsgCaps(false));
+    transcribeCapable(host)
+      .then((ok) => alive && setDictateCap(ok))
+      .catch(() => alive && setDictateCap(false));
     return () => {
       alive = false;
     };
@@ -708,6 +714,7 @@ function MessengerView({ host }: { host: HostApi }) {
             onThreadsChanged={onConvosChanged}
             onThreadMeta={onThreadMeta}
             onForward={msgCaps ? setFwd : undefined}
+            canDictate={dictateCap}
           />
         ) : (
           <div className="msn-conv-blank">

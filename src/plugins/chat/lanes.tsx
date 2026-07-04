@@ -40,6 +40,7 @@ import {
   streamBot,
   streamConvo,
   streamThreadMessage,
+  transcribeAudio,
   isOnline,
   type BotDTO,
   type BotMessageDTO,
@@ -64,6 +65,7 @@ import {
   nameOf,
   relTime,
   sleep,
+  speakText,
   Svg,
   type EditTarget,
   type ReplyTarget,
@@ -336,6 +338,7 @@ export function BotConvoView(p: {
                         text: m.body.slice(0, 120),
                       }),
                     onForward: p.onForward ? () => p.onForward!({ source: "bot", sourceId: bot.id, msgId: m.id }) : undefined,
+                    onSpeak: m.role === "bot" && m.body ? () => speakText(m.body) : undefined,
                   }}
                 />
               </div>
@@ -820,6 +823,8 @@ export function KiThreadView(p: {
   onThreadMeta: (id: string, meta: { title?: string; color?: string; category?: string }) => void;
   /** Weiterleiten in eine Team-Convo (index zeigt den Ziel-Picker). */
   onForward?: (f: { source: "team" | "bot" | "ki"; sourceId: string; msgId: number }) => void;
+  /** Diktat verfügbar (Capability-Probe gegen POST /api/transcribe in index). */
+  canDictate?: boolean;
 }) {
   const { host, thread, model } = p;
   const [messages, setMessages] = useState<ViewMsg[]>([]);
@@ -1105,6 +1110,7 @@ export function KiThreadView(p: {
                             });
                           },
                           onForward: p.onForward ? () => p.onForward!({ source: "ki", sourceId: thread.id, msgId: m.id! }) : undefined,
+                          onSpeak: !mine && m.content && !m.deleted ? () => speakText(m.content) : undefined,
                           ...(mine && !m.deleted
                             ? {
                                 onEdit: () => {
@@ -1138,6 +1144,7 @@ export function KiThreadView(p: {
         placeholder="Nachricht an u1…"
         busy={sending}
         allowAttach
+        onDictate={p.canDictate ? (wav) => transcribeAudio(host, wav) : undefined}
         reply={reply}
         onCancelReply={() => setReply(null)}
         edit={edit}

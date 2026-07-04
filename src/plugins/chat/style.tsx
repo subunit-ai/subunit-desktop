@@ -227,7 +227,9 @@ html.dark .msn-presence{border-color:#0b1220}
 .msn-cbtn.rec-stop{color:#dc2626}
 .msn-rec{flex:1;display:flex;align-items:center;gap:10px;min-height:46px;padding:0 14px;border-radius:14px;background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.25)}
 .msn-rec-dot{width:10px;height:10px;border-radius:50%;background:#ef4444;animation:msn-pulse 1.1s infinite}
+.msn-rec-l{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#dc2626;opacity:.8}
 .msn-rec-t{font-size:13px;font-weight:650;color:#dc2626;flex:1}
+.msn-cbtn-busy{display:inline-flex;align-items:center;justify-content:center;cursor:default}
 .msn-send{width:auto;flex:none;padding:13px 15px}
 .msn-send svg{width:18px;height:18px}
 .msn-spin{width:16px;height:16px;border-radius:50%;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;animation:msn-rot .7s linear infinite;display:inline-block}

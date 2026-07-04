@@ -503,6 +503,34 @@ export async function uploadFile(
   return (await res.json()) as { id: string; kind: string; name: string };
 }
 
+/** Diktat: Audio (16-kHz-mono-WAV) → Text. Server proxied zur lokalen Echo-transcribe-api. */
+export async function transcribeAudio(host: HostApi, wav: Blob, language = "de"): Promise<string> {
+  const form = new FormData();
+  form.append("file", wav, "diktat.wav");
+  form.append("language", language);
+  const res = await host.backend.fetch(B, "/api/transcribe", { method: "POST", body: form });
+  if (!res.ok) {
+    if (res.status === 404 || res.status === 503)
+      throw new Error("Diktat ist am Server noch nicht aktiviert.");
+    throw new Error(await errMessage(res));
+  }
+  const data = (await res.json()) as { text?: string };
+  return String(data.text || "").trim();
+}
+
+/**
+ * Capability-Probe für Diktat: POST ohne Datei. 400 (`no_file`) beweist Route + Key;
+ * 404 = alter Server, 503 = Route vorhanden, aber transcribe-api nicht konfiguriert.
+ */
+export async function transcribeCapable(host: HostApi): Promise<boolean> {
+  try {
+    const res = await host.backend.fetch(B, "/api/transcribe", { method: "POST", body: new FormData() });
+    return res.status === 400;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Fetch protected media bytes (`/api/media/:id`, owner or convo member) and hand
  * back an object URL. Cached per id for the app's lifetime — media is immutable.

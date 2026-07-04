@@ -57,6 +57,7 @@ export const ICONS = {
   pin: "M12 17v5|9 10.8 5.7 14a1 1 0 0 0 .7 1.7h11.2a1 1 0 0 0 .7-1.7L15 10.8V5l1-2H8l1 2v5.8Z",
   smile: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z|8 14s1.5 2 4 2 4-2 4-2|9 9h.01M15 9h.01",
   mic: "M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z|19 10v1a7 7 0 0 1-14 0v-1|12 18v4",
+  speaker: "M11 5 6 9H2v6h4l5 4V5Z|M15.5 8.5a5 5 0 0 1 0 7|M19 4.9a10 10 0 0 1 0 14.2",
   stop: "M7 7h10v10H7Z",
   attach: "M21.4 11.05 12.25 20.2a6 6 0 0 1-8.49-8.49l9.2-9.19a4 4 0 0 1 5.65 5.66L9.4 17.4a2 2 0 0 1-2.83-2.83l8.49-8.48",
   x: "M18 6 6 18M6 6l12 12",
@@ -233,9 +234,40 @@ export interface BubbleActions {
   onReact?: (emoji: string) => void;
   onReply?: () => void;
   onForward?: () => void;
+  onSpeak?: () => void;
   onEdit?: () => void;
   onDelete?: () => void;
   onPin?: () => void;
+}
+
+// ── Vorlesen („u1-voice raus", v1): System-TTS via speechSynthesis — null Infra,
+//    Qualität = installierte macOS-Stimmen. Erneuter Klick während einer laufenden
+//    Ausgabe stoppt sie (Toggle). Markdown wird vor dem Sprechen entschärft.
+export function speakText(text: string): void {
+  const synth = window.speechSynthesis;
+  if (!synth) return;
+  if (synth.speaking) {
+    synth.cancel();
+    return;
+  }
+  const clean = text
+    .replace(/```[\s\S]*?```/g, ". Codeblock. ")
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/[*_~>|]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!clean) return;
+  const u = new SpeechSynthesisUtterance(clean.slice(0, 4000));
+  u.lang = "de-DE";
+  const voices = synth.getVoices();
+  u.voice =
+    voices.find((v) => v.lang.startsWith("de") && /siri|premium|enhanced|anna|helena/i.test(v.name)) ||
+    voices.find((v) => v.lang.startsWith("de")) ||
+    null;
+  synth.speak(u);
 }
 
 export interface BubbleProps {
@@ -269,7 +301,7 @@ export function Bubble(p: BubbleProps) {
   const [pickOpen, setPickOpen] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const a = p.actions;
-  const hasActions = !!(a?.onReact || a?.onReply || a?.onEdit || a?.onDelete || a?.onPin);
+  const hasActions = !!(a?.onReact || a?.onReply || a?.onForward || a?.onSpeak || a?.onEdit || a?.onDelete || a?.onPin);
 
   return (
     <div id={p.domId} className={`msn-msg ${p.mine ? "me" : "them"}`}>
@@ -348,6 +380,18 @@ export function Bubble(p: BubbleProps) {
                   }}
                 >
                   <Svg d={ICONS.forward} />
+                </button>
+              )}
+              {a?.onSpeak && (
+                <button
+                  className="msn-act"
+                  title="Vorlesen (Klick stoppt)"
+                  onClick={() => {
+                    setPickOpen(false);
+                    a.onSpeak!();
+                  }}
+                >
+                  <Svg d={ICONS.speaker} />
                 </button>
               )}
               {a?.onPin && (
@@ -560,6 +604,44 @@ async function startRecording(
   };
 }
 
+/**
+ * Aufnahme-Blob (m4a/webm) → 16-kHz-mono-s16le-WAV — das dokumentierte
+ * Upload-Format der Echo-transcribe-api (Downsampling spart ~6× Bandbreite;
+ * WKWebView-MediaRecorder liefert AAC, das decodeAudioData sicher dekodiert).
+ */
+async function blobToWav16k(blob: Blob): Promise<Blob> {
+  const ac = new AudioContext();
+  let decoded: AudioBuffer;
+  try {
+    decoded = await ac.decodeAudioData(await blob.arrayBuffer());
+  } finally {
+    void ac.close();
+  }
+  const rate = 16000;
+  const frames = Math.max(1, Math.ceil(decoded.duration * rate));
+  const oc = new OfflineAudioContext(1, frames, rate);
+  const src = oc.createBufferSource();
+  src.buffer = decoded;
+  src.connect(oc.destination);
+  src.start();
+  const rendered = await oc.startRendering();
+  const pcm = rendered.getChannelData(0);
+  const buf = new ArrayBuffer(44 + pcm.length * 2);
+  const dv = new DataView(buf);
+  const str = (off: number, s: string) => {
+    for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i));
+  };
+  str(0, "RIFF"); dv.setUint32(4, 36 + pcm.length * 2, true); str(8, "WAVE");
+  str(12, "fmt "); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+  dv.setUint32(24, rate, true); dv.setUint32(28, rate * 2, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+  str(36, "data"); dv.setUint32(40, pcm.length * 2, true);
+  for (let i = 0; i < pcm.length; i++) {
+    const s = Math.max(-1, Math.min(1, pcm[i]));
+    dv.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return new Blob([buf], { type: "audio/wav" });
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // Composer
 // ════════════════════════════════════════════════════════════════════════════
@@ -592,6 +674,8 @@ export interface ComposerProps {
   busy?: boolean;
   allowAttach?: boolean;
   allowVoice?: boolean;
+  /** Diktat (Echo): Aufnahme → 16-kHz-WAV → Callback liefert den Text für den Draft. */
+  onDictate?: (wav: Blob) => Promise<string>;
   reply?: ReplyTarget | null;
   onCancelReply?: () => void;
   edit?: EditTarget | null;
@@ -612,6 +696,8 @@ export function Composer(p: ComposerProps) {
   const [pending, setPending] = useState<PendingAtt[]>([]);
   const [recording, setRecording] = useState(false);
   const [recElapsed, setRecElapsed] = useState(0);
+  const [recMode, setRecMode] = useState<"voice" | "dictate">("voice");
+  const [transcribing, setTranscribing] = useState(false);
   const recRef = useRef<Recorder | null>(null);
   const recTimer = useRef<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -690,29 +776,73 @@ export function Composer(p: ComposerProps) {
     [upload]
   );
 
-  const startVoice = useCallback(async () => {
-    if (recRef.current) return; // guard double-click while a recorder exists
-    // Reserve the slot synchronously so a second click / unmount is detectable.
-    recRef.current = { stop() {} };
-    try {
-      const rec = await startRecording((blob, dur, ext) => {
-        void upload(blob, "audio", `sprachnachricht-${Date.now()}.${ext}`, Math.round(dur));
-      });
-      // Unmounted (convo switch) or superseded while the permission prompt was
-      // open → immediately release the stream instead of leaking the mic.
-      if (!mountedRef.current || recRef.current === null) {
-        rec.stop(false);
-        return;
+  const beginRec = useCallback(
+    async (mode: "voice" | "dictate", onDone: (blob: Blob, dur: number, ext: string) => void) => {
+      if (recRef.current) return; // guard double-click while a recorder exists
+      // Reserve the slot synchronously so a second click / unmount is detectable.
+      recRef.current = { stop() {} };
+      try {
+        const rec = await startRecording(onDone);
+        // Unmounted (convo switch) or superseded while the permission prompt was
+        // open → immediately release the stream instead of leaking the mic.
+        if (!mountedRef.current || recRef.current === null) {
+          rec.stop(false);
+          return;
+        }
+        recRef.current = rec;
+        setRecMode(mode);
+        setRecording(true);
+        setRecElapsed(0);
+        recTimer.current = window.setInterval(() => setRecElapsed((s) => s + 1), 1000);
+      } catch {
+        recRef.current = null;
+        host.notifications.notify(
+          "Mikrofon nicht verfügbar",
+          mode === "dictate" ? "Diktat konnte nicht gestartet werden." : "Sprachnachricht konnte nicht gestartet werden."
+        );
       }
-      recRef.current = rec;
-      setRecording(true);
-      setRecElapsed(0);
-      recTimer.current = window.setInterval(() => setRecElapsed((s) => s + 1), 1000);
-    } catch {
-      recRef.current = null;
-      host.notifications.notify("Mikrofon nicht verfügbar", "Sprachnachricht konnte nicht gestartet werden.");
-    }
-  }, [host, upload]);
+    },
+    [host]
+  );
+
+  const startVoice = useCallback(
+    () =>
+      beginRec("voice", (blob, dur, ext) => {
+        void upload(blob, "audio", `sprachnachricht-${Date.now()}.${ext}`, Math.round(dur));
+      }),
+    [beginRec, upload]
+  );
+
+  // Diktat: Aufnahme → 16-kHz-WAV → onDictate (Transkription) → Text in den Draft.
+  const finishDictate = useCallback(
+    async (blob: Blob) => {
+      const dictate = p.onDictate;
+      if (!dictate) return;
+      setTranscribing(true);
+      try {
+        const wav = await blobToWav16k(blob);
+        const text = (await dictate(wav)).trim();
+        if (!mountedRef.current) return;
+        if (text) {
+          setDraft((d) => (d.trim() ? `${d.replace(/\s+$/, "")} ${text}` : text));
+          window.setTimeout(() => taRef.current?.focus(), 0);
+        } else {
+          host.notifications.notify("Diktat", "Kein Text erkannt.");
+        }
+      } catch (e) {
+        if (mountedRef.current)
+          host.notifications.notify("Diktat fehlgeschlagen", e instanceof Error ? e.message : String(e));
+      } finally {
+        if (mountedRef.current) setTranscribing(false);
+      }
+    },
+    [host, p.onDictate]
+  );
+
+  const startDictate = useCallback(
+    () => beginRec("dictate", (blob) => void finishDictate(blob)),
+    [beginRec, finishDictate]
+  );
 
   const stopVoice = useCallback((save: boolean) => {
     recRef.current?.stop(save);
@@ -833,11 +963,16 @@ export function Composer(p: ComposerProps) {
         {recording ? (
           <div className="msn-rec">
             <span className="msn-rec-dot" />
+            {recMode === "dictate" && <span className="msn-rec-l">Diktat</span>}
             <span className="msn-rec-t">{fmtDuration(recElapsed)}</span>
             <button className="msn-cbtn" title="Verwerfen" onClick={() => stopVoice(false)}>
               <Svg d={ICONS.x} />
             </button>
-            <button className="msn-cbtn rec-stop" title="Aufnahme beenden & anhängen" onClick={() => stopVoice(true)}>
+            <button
+              className="msn-cbtn rec-stop"
+              title={recMode === "dictate" ? "Aufnahme beenden & transkribieren" : "Aufnahme beenden & anhängen"}
+              onClick={() => stopVoice(true)}
+            >
               <Svg d={ICONS.stop} />
             </button>
           </div>
@@ -887,6 +1022,18 @@ export function Composer(p: ComposerProps) {
           <button className="msn-cbtn" title="Sprachnachricht aufnehmen" disabled={p.disabled} onClick={() => void startVoice()}>
             <Svg d={ICONS.mic} />
           </button>
+        ) : null}
+
+        {p.onDictate && !recording ? (
+          transcribing ? (
+            <span className="msn-cbtn msn-cbtn-busy" title="Transkribiere…">
+              <span className="msn-minispin" />
+            </span>
+          ) : (
+            <button className="msn-cbtn" title="Diktieren (Echo-Transkription)" disabled={p.disabled} onClick={() => void startDictate()}>
+              <Svg d={ICONS.mic} />
+            </button>
+          )
         ) : null}
 
         <button

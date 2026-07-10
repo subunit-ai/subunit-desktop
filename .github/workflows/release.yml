@@ -53,3 +53,53 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: "--target aarch64-apple-darwin"
+
+  mirror:
+    # Distribution: öffentliches Repo subunit-ai/subunit-desktop-releases (nur Binaries +
+    # latest.json, kein Quellcode) — dieses Repo wird privat, und Release-Assets privater
+    # Repos sind anonym nie abrufbar (der Updater bekäme 404). Clients ab v0.8.3 pollen
+    # subunit-desktop-releases; der Release hier bleibt übergangsweise zusätzlich bestehen
+    # (Clients ≤v0.8.2 pollen dieses Repo, solange es public ist). Secret: RELEASES_TOKEN =
+    # Schreibrecht aufs Releases-Repo. Muster: echo-tauri → echo-releases.
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Release nach subunit-desktop-releases spiegeln (Manifest-URLs umgeschrieben)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASES_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.ref_name }}"
+          repo="${{ github.repository }}"
+          pubrepo="subunit-ai/subunit-desktop-releases"
+          mkdir -p /tmp/dist && cd /tmp/dist
+          gh release download "$tag" -R "$repo" --clobber
+          test -f latest.json || { echo "::error::latest.json fehlt im Release $tag"; exit 1; }
+          # URLs im Manifest aufs public Repo umschreiben — Signaturen bleiben unberührt
+          # (minisign signiert die Datei, nicht die URL). Voller Download-Pfad als Muster,
+          # weil "subunit-desktop" ein Präfix von "subunit-desktop-releases" ist.
+          python3 - <<'PY'
+          import json
+          m = json.load(open("latest.json"))
+          for v in m["platforms"].values():
+              v["url"] = v["url"].replace(
+                  "subunit-ai/subunit-desktop/releases/download",
+                  "subunit-ai/subunit-desktop-releases/releases/download")
+          json.dump(m, open("latest.json", "w"), indent=2)
+          print("Plattformen:", ", ".join(sorted(m["platforms"])))
+          PY
+          export GH_TOKEN="$RELEASES_TOKEN"
+          if ! gh release view "$tag" -R "$pubrepo" > /dev/null 2>&1; then
+            gh release create "$tag" -R "$pubrepo" --draft --title "Subunit Desktop $tag" \
+              --notes "Subunit Desktop $tag — macOS (Apple Silicon). Auto-Update-Feed: latest.json. Erster Start: Rechtsklick → Öffnen (ad-hoc signiert)."
+          fi
+          gh release upload "$tag" -R "$pubrepo" /tmp/dist/* --clobber
+          # Draft-ID über die Release-LISTE auflösen — /releases/tags/<tag> sieht Drafts nicht
+          # (404; hat bei echo-tauri den ersten Mirror-Publish gekillt).
+          pubid=$(gh api "repos/$pubrepo/releases?per_page=30" \
+            --jq "[.[] | select(.tag_name==\"$tag\")][0].id // empty")
+          [ -n "$pubid" ] || { echo "::error::kein $pubrepo-Release für $tag gefunden"; exit 1; }
+          gh api -X PATCH "repos/$pubrepo/releases/$pubid" \
+            -F draft=false -f make_latest=true > /dev/null
+          echo "gespiegelt: https://github.com/$pubrepo/releases/tag/$tag"

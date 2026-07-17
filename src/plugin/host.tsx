@@ -48,6 +48,7 @@ import {
   openExternal,
   openPath,
   revealPath,
+  setAvatarUrl as ipcSetAvatarUrl,
   synapseIngest,
 } from "../lib/ipc";
 import { BACKENDS, BACKEND_BASE_URL } from "../lib/config";
@@ -119,6 +120,7 @@ export class HostController {
     email: "",
     plan: "free",
     workspace_id: "",
+    avatar_url: "",
     logged_in: false,
   };
   private accountSubs = new Set<(a: Account) => void>();
@@ -163,6 +165,14 @@ export class HostController {
   onAccount(cb: (a: Account) => void): () => void {
     this.accountSubs.add(cb);
     return () => this.accountSubs.delete(cb);
+  }
+  /** Local echo after an own avatar upload/delete: patch the snapshot + notify
+   *  subscribers right away. In Tauri the Rust `config-changed` event follows
+   *  with the same data; in browser dev this IS the only update path. */
+  applyAvatarUrl(url: string): void {
+    if (this.account.avatar_url === url) return;
+    this.account = { ...this.account, avatar_url: url };
+    for (const cb of this.accountSubs) cb(this.account);
   }
 
   // ── theme ──────────────────────────────────────────────────────────────
@@ -324,6 +334,10 @@ export function makeHostApi(
       getToken: () => authGetToken(),
       account: () => ctrl.getAccount(),
       onChange: (cb) => ctrl.onAccount(cb),
+      setAvatarUrl: async (url) => {
+        if (isTauri()) await ipcSetAvatarUrl(url);
+        ctrl.applyAvatarUrl(url);
+      },
     },
 
     backend: {

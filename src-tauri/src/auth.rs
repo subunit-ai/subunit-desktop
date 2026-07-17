@@ -92,6 +92,7 @@ pub fn login(app: &AppHandle) -> anyhow::Result<String> {
                     .unwrap_or(0);
                 let workspace = params.get("workspace_id").cloned().unwrap_or_default();
                 let email = email_from_jwt(&access).unwrap_or_default();
+                let avatar = picture_from_jwt(&access);
 
                 {
                     let st = app.state::<AppState>();
@@ -104,7 +105,17 @@ pub fn login(app: &AppHandle) -> anyhow::Result<String> {
                     if !email.is_empty() {
                         c.account_email = email.clone();
                     }
+                    // Mirror UNCONDITIONALLY (not only-when-empty): the claim is
+                    // the server's truth — absent claim = avatar was deleted.
+                    c.account_avatar_url = avatar;
                     let _ = c.save();
+                }
+
+                {
+                    use tauri::Emitter;
+                    // Announce the new session right away (email + avatar) — the
+                    // plan refresh below only emits when the tier changed.
+                    let _ = app.emit("subunit://config-changed", ());
                 }
 
                 // Pull the real workspace tier → config.plan so the UI doesn't keep
@@ -178,15 +189,28 @@ pub fn ensure_fresh(app: &AppHandle) {
     let now = now_secs();
     match do_refresh(&refresh) {
         Ok((access, new_refresh, exp)) => {
-            let st = app.state::<AppState>();
-            let mut c = st.config.lock();
-            c.subunit_access_token = access;
-            if !new_refresh.is_empty() {
-                c.subunit_refresh_token = new_refresh;
+            // Avatar changes (upload/delete on another device) ride the token
+            // refresh via the "picture" claim — mirror it on every refresh.
+            let avatar = picture_from_jwt(&access);
+            let avatar_changed = {
+                let st = app.state::<AppState>();
+                let mut c = st.config.lock();
+                c.subunit_access_token = access;
+                if !new_refresh.is_empty() {
+                    c.subunit_refresh_token = new_refresh;
+                }
+                c.subunit_token_expires_in = exp;
+                c.subunit_token_issued_at = now;
+                let changed = c.account_avatar_url != avatar;
+                c.account_avatar_url = avatar;
+                let _ = c.save();
+                changed
+            };
+            if avatar_changed {
+                use tauri::Emitter;
+                // Same event the plan refresh uses — the UI re-reads the account.
+                let _ = app.emit("subunit://config-changed", ());
             }
-            c.subunit_token_expires_in = exp;
-            c.subunit_token_issued_at = now;
-            let _ = c.save();
         }
         Err(RefreshFail::TokenDead) => {
             log::warn!("refresh token rejected by server (4xx) — clearing it; re-login required");
@@ -399,14 +423,26 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-fn email_from_jwt(token: &str) -> Option<String> {
+fn jwt_payload(token: &str) -> Option<serde_json::Value> {
     let payload = token.split('.').nth(1)?;
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(payload)
         .ok()?;
-    let j: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn email_from_jwt(token: &str) -> Option<String> {
+    let j = jwt_payload(token)?;
     j.get("email")
         .and_then(|v| v.as_str())
         .or_else(|| j.get("sub").and_then(|v| v.as_str()))
         .map(|s| s.to_string())
+}
+
+/// The OIDC "picture" claim — the public, versioned avatar URL. Only set by
+/// auth.subunit.ai when an avatar exists, so "" means "no avatar".
+fn picture_from_jwt(token: &str) -> String {
+    jwt_payload(token)
+        .and_then(|j| j.get("picture").and_then(|v| v.as_str()).map(String::from))
+        .unwrap_or_default()
 }

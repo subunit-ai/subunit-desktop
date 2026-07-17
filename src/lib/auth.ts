@@ -43,6 +43,7 @@ const SIGNED_OUT: Account = {
   email: "",
   plan: "free",
   workspace_id: "",
+  avatar_url: "",
   logged_in: false,
 };
 
@@ -129,6 +130,7 @@ export async function fetchAccount(): Promise<Account> {
     email: claims?.email ?? claims?.sub ?? "dev@local",
     plan: claims?.plan ?? "dev",
     workspace_id: claims?.ws ?? (Array.isArray(claims?.wss) ? claims.wss[0] : "") ?? "",
+    avatar_url: claims?.picture ?? "",
     logged_in: true,
   };
 }
@@ -191,6 +193,8 @@ interface JwtClaims {
   plan?: string;
   ws?: string;
   wss?: string[];
+  /** OIDC: public versioned avatar URL (only present when an avatar exists). */
+  picture?: string;
 }
 
 /** Decode a JWT payload for display only — the server is the sole authority. */

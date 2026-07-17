@@ -19,6 +19,8 @@ export interface Account {
   email: string;
   plan: string;
   workspace_id: string;
+  /** Public, versioned avatar URL ("" = no avatar). Usable as a plain <img src>. */
+  avatar_url: string;
   logged_in: boolean;
 }
 
@@ -27,6 +29,11 @@ export const appVersion = (): Promise<string> => invoke("app_version");
 
 /** Current account (email/plan/logged_in). */
 export const getAccount = (): Promise<Account> => invoke("get_account");
+
+/** Store the avatar URL after an own upload/delete (POST/DELETE /me/avatar) so the
+ *  UI updates immediately — the JWT "picture" claim follows on the next refresh. */
+export const setAvatarUrl = (url: string): Promise<void> =>
+  invoke("set_avatar_url", { url });
 
 /** Fresh access token for Bearer-auth on atlas-api fetches ("" when signed out). */
 export const getAuthToken = (): Promise<string> => invoke("get_auth_token");

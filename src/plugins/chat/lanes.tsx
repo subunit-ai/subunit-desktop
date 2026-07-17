@@ -17,6 +17,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { HostApi } from "../../plugin/types";
+import { Avatar } from "../../components/Avatar";
 import {
   addConvoMember,
   closeThread,
@@ -106,6 +107,11 @@ function autoScroll(el: HTMLElement | null, force = false) {
 const sameDay = (a?: number, b?: number) =>
   !!a && !!b && new Date(a).toDateString() === new Date(b).toDateString();
 
+/** Profile-image URL of a team member ("" = none). u1-chat delivers
+ *  team_users.avatar as an absolute (versioned) URL. */
+const avatarOf = (users: TeamUserDTO[], email?: string) =>
+  users.find((u) => u.email === email)?.avatar || "";
+
 function FindBar(p: { q: string; onQ: (q: string) => void; count: number; onClose: () => void }) {
   return (
     <div className="msn-findbar">
@@ -139,6 +145,8 @@ export function BotConvoView(p: {
   host: HostApi;
   bot: BotDTO;
   myEmail: string;
+  /** Team roster — resolves human senders to their profile image. */
+  users: TeamUserDTO[];
   /** Latest room activity (rail preview + read tracking). */
   onActivity: (botId: string, lastTs: number, lastRole: string, lastText: string) => void;
   /** An incoming (not-mine) message arrived live — index decides to notify. */
@@ -318,7 +326,11 @@ export function BotConvoView(p: {
                           <Svg d={ICONS.orb} />
                         </span>
                       ) : (
-                        <span className="msn-av sm">{initialOf(m.sender_name || nameOf(m.sender))}</span>
+                        <Avatar
+                          url={avatarOf(p.users, m.sender)}
+                          className="msn-av sm"
+                          fallback={initialOf(m.sender_name || nameOf(m.sender))}
+                        />
                       )
                     ) : undefined
                   }
@@ -582,10 +594,13 @@ export function TeamConvoView(p: {
   return (
     <DropZone onFiles={(list) => setDropped((s) => ({ list, n: (s?.n ?? 0) + 1 }))}>
       <div className="msn-head">
-        <span className={`msn-av${isGroup ? " grp" : ""}`}>
-          {isGroup ? <Svg d={ICONS.group} /> : initialOf(title)}
+        <Avatar
+          url={isGroup ? "" : avatarOf(p.users, convo.other)}
+          className={`msn-av${isGroup ? " grp" : ""}`}
+          fallback={isGroup ? <Svg d={ICONS.group} /> : initialOf(title)}
+        >
           {!isGroup && <span className={`msn-presence${online ? "" : " off"}`} />}
-        </span>
+        </Avatar>
         <div className="msn-head-tx">
           <div className="msn-head-title">{title}</div>
           <div className="msn-head-sub">
@@ -719,7 +734,15 @@ export function TeamConvoView(p: {
                   domId={`team-${convo.id}-${m.id}`}
                   mine={mine}
                   senderLabel={showSender ? nameOf(m.sender) : undefined}
-                  avatar={!mine && isGroup ? <span className="msn-av sm">{initialOf(nameOf(m.sender))}</span> : undefined}
+                  avatar={
+                    !mine && isGroup ? (
+                      <Avatar
+                        url={avatarOf(p.users, m.sender)}
+                        className="msn-av sm"
+                        fallback={initialOf(nameOf(m.sender))}
+                      />
+                    ) : undefined
+                  }
                   body={m.body}
                   deleted={!!m.deleted}
                   edited={!!m.edited}

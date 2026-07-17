@@ -117,6 +117,8 @@ export interface Account {
   email: string;
   plan: string;
   workspace_id: string;
+  /** Public, versioned avatar URL ("" = no avatar). Usable as a plain <img src>. */
+  avatar_url: string;
   logged_in: boolean;
 }
 
@@ -163,6 +165,12 @@ export interface HostAuth {
   account(): Account;
   /** Subscribe to account changes; returns an unsubscribe fn. */
   onChange(cb: (account: Account) => void): () => void;
+  /**
+   * Persist the account's avatar URL after the plugin uploaded/removed the image
+   * itself (POST/DELETE auth.subunit.ai/me/avatar) — "" clears it. Propagates to
+   * every account surface immediately; the JWT claim catches up on refresh.
+   */
+  setAvatarUrl(url: string): Promise<void>;
 }
 
 export interface HostBackend {

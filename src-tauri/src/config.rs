@@ -28,6 +28,10 @@ fn config_path() -> PathBuf {
 pub struct Config {
     /// Account email decoded from the access-token JWT (display only).
     pub account_email: String,
+    /// Public, versioned avatar URL from the JWT "picture" claim (display only;
+    /// "" = no avatar). Mirrored on every login/refresh — auth.subunit.ai busts
+    /// the cache by rotating the `?v=` suffix, so the raw URL is always current.
+    pub account_avatar_url: String,
     /// Workspace tier (free/basic/pro/enterprise/...). Display only.
     pub plan: String,
     /// Active workspace id from the OAuth callback.
@@ -44,6 +48,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             account_email: String::new(),
+            account_avatar_url: String::new(),
             plan: "free".to_string(),
             subunit_workspace_id: String::new(),
             subunit_access_token: String::new(),

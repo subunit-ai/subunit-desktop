@@ -33,10 +33,13 @@ const U1_CHAT = "https://chat.subunit.ai";
  *   · transcribe-api → Echo's transcription / help backend
  *   · memory-agent   → the local semantic memory API (ChromaDB/bge-m3); the same
  *                      engine atlas-api wraps for /api/m/search. Local-only.
+ *   · auth           → auth.subunit.ai account endpoints (avatar upload/delete);
+ *                      the token ITSELF still only flows through Rust.
  */
 const SNI = "https://sni.subunit.ai";
 const TRANSCRIBE = "https://transcribe.subunit.ai";
 const MEMORY_AGENT = "http://127.0.0.1:8001";
+const AUTH = "https://auth.subunit.ai";
 
 export const BACKEND_BASE_URL: string =
   import.meta.env.VITE_API_BASE?.replace(/\/+$/, "") ?? LOCAL_DEV;
@@ -58,6 +61,7 @@ export const BACKENDS = {
   "sni-api": SNI,
   "transcribe-api": TRANSCRIBE,
   "memory-agent": MEMORY_AGENT,
+  auth: AUTH,
 } as const;
 
 /** A registered backend name. */

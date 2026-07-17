@@ -47,6 +47,7 @@ import {
   type TeamUserDTO,
   type ThreadDTO,
 } from "../../lib/u1chat";
+import { Avatar } from "../../components/Avatar";
 import { authHint, ICONS, initialOf, nameOf, relTime, Svg } from "./convo";
 import { BotConvoView, KiThreadView, TeamConvoView } from "./lanes";
 import { MessengerStyle } from "./style";
@@ -395,6 +396,8 @@ function MessengerView({ host }: { host: HostApi }) {
   }
 
   const entries = useMemo<Entry[]>(() => {
+    // u1-chat delivers team_users.avatar as an absolute (versioned) URL.
+    const avatarOf = (email?: string) => users.find((u) => u.email === email)?.avatar || "";
     const out: Entry[] = [];
     for (const b of bots) {
       out.push({
@@ -430,10 +433,13 @@ function MessengerView({ host }: { host: HostApi }) {
         unreadDot: false,
         online,
         avatar: (
-          <span className={`msn-av${isDM ? "" : " grp"}`}>
-            {isDM ? initialOf(title) : <Svg d={ICONS.group} />}
+          <Avatar
+            url={isDM ? avatarOf(c.other) : ""}
+            className={`msn-av${isDM ? "" : " grp"}`}
+            fallback={isDM ? initialOf(title) : <Svg d={ICONS.group} />}
+          >
             {isDM && <span className={`msn-presence${online ? "" : " off"}`} />}
-          </span>
+          </Avatar>
         ),
       });
     }
@@ -461,7 +467,7 @@ function MessengerView({ host }: { host: HostApi }) {
       .filter((e) => (filter === "all" ? true : filter === e.kind || (filter === "bots" && e.kind === "bot")))
       .filter((e) => !q || e.title.toLowerCase().includes(q) || e.preview.toLowerCase().includes(q))
       .sort((a, b) => b.ts - a.ts);
-  }, [bots, convos, threads, kiAllowed, botRead, myEmail, filter, query]);
+  }, [bots, convos, threads, kiAllowed, botRead, myEmail, filter, query, users]);
 
   // ── active pane ──
 
@@ -557,10 +563,9 @@ function MessengerView({ host }: { host: HostApi }) {
                     const label = nameOf(u.email, u.name);
                     return (
                       <button key={u.email} className="msn-menu-i" onClick={() => void startDM(u.email)}>
-                        <span className="msn-av sm">
-                          {initialOf(label)}
+                        <Avatar url={u.avatar} className="msn-av sm" fallback={initialOf(label)}>
                           {isOnline(u.last_seen) && <span className="msn-presence" />}
-                        </span>
+                        </Avatar>
                         <span className="n">{label}</span>
                       </button>
                     );
@@ -685,6 +690,7 @@ function MessengerView({ host }: { host: HostApi }) {
             host={host}
             bot={activeBot}
             myEmail={myEmail}
+            users={users}
             onActivity={onBotActivity}
             onIncoming={onIncoming}
             onForward={msgCaps ? setFwd : undefined}

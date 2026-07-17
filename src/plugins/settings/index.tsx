@@ -33,6 +33,7 @@ import {
 } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { Account, HostApi, PluginModule } from "../../plugin/types";
+import { Avatar } from "../../components/Avatar";
 import { SubunitMark } from "../../components/SubunitMark";
 import { BACKENDS } from "../../lib/config";
 
@@ -300,14 +301,90 @@ function AppearanceSection({ host }: { host: HostApi }) {
 // 2) Konto
 // ════════════════════════════════════════════════════════════════════════
 
+// Server contract (auth.subunit.ai): JPEG/PNG/WebP, max 8 MB; the server crops
+// to 512×512 WebP itself — the client never resizes.
+const AVATAR_ACCEPT = "image/jpeg,image/png,image/webp";
+const AVATAR_MAX_BYTES = 8 * 1024 * 1024;
+
+/** German error line for an avatar upload/delete response status. */
+function avatarErrText(status: number): string {
+  switch (status) {
+    case 401:
+      return "Nicht angemeldet — melde dich über die Account-Pille oben rechts an.";
+    case 413:
+      return "Bild ist zu groß (max. 8 MB).";
+    case 415:
+      return "Format nicht unterstützt — bitte JPEG, PNG oder WebP wählen.";
+    case 429:
+      return "Zu viele Versuche — bitte in ein paar Minuten erneut probieren.";
+    default:
+      return `Profilbild konnte nicht gespeichert werden (HTTP ${status}).`;
+  }
+}
+
 function AccountSection({ host }: { host: HostApi }) {
   const [account, setAccount] = useState<Account>(host.auth.account());
   const [name, setName] = useState("");
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  const [avBusy, setAvBusy] = useState(false);
+  const [avErr, setAvErr] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => host.auth.onChange(setAccount), [host]);
+
+  // ── profile picture: upload / remove against auth.subunit.ai/me/avatar ──
+  const uploadAvatar = useCallback(
+    async (file: File) => {
+      setAvErr("");
+      if (file.size > AVATAR_MAX_BYTES) {
+        setAvErr(avatarErrText(413));
+        return;
+      }
+      setAvBusy(true);
+      try {
+        const form = new FormData();
+        form.append("file", file);
+        const res = await host.backend.fetch("auth", "/me/avatar", {
+          method: "POST",
+          body: form,
+        });
+        if (!res.ok) {
+          setAvErr(avatarErrText(res.status));
+          return;
+        }
+        const j = (await res.json()) as { avatar_url?: string };
+        // The response URL is already versioned — adopt it immediately; the
+        // JWT "picture" claim catches up on the next token refresh.
+        await host.auth.setAvatarUrl(j.avatar_url ?? "");
+      } catch {
+        setAvErr("Netzwerkfehler — Profilbild konnte nicht hochgeladen werden.");
+      } finally {
+        setAvBusy(false);
+      }
+    },
+    [host]
+  );
+
+  const removeAvatar = useCallback(async () => {
+    setAvErr("");
+    setAvBusy(true);
+    try {
+      const res = await host.backend.fetch("auth", "/me/avatar", {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        setAvErr(avatarErrText(res.status));
+        return;
+      }
+      await host.auth.setAvatarUrl("");
+    } catch {
+      setAvErr("Netzwerkfehler — Profilbild konnte nicht entfernt werden.");
+    } finally {
+      setAvBusy(false);
+    }
+  }, [host]);
 
   // Display name: stored override, else derived from the email (mirror App.tsx).
   useEffect(() => {
@@ -358,9 +435,38 @@ function AccountSection({ host }: { host: HostApi }) {
 
       <div className="card set-block">
         <div className="set-acct-top">
-          <span className="set-avatar" aria-hidden="true">
-            {account.logged_in ? initials || "U1" : "–"}
-          </span>
+          {/* Hidden picker — the avatar itself and the "Bild wählen" row share it. */}
+          <input
+            ref={fileRef}
+            type="file"
+            accept={AVATAR_ACCEPT}
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              e.target.value = ""; // same file again → re-fires onChange
+              if (f) void uploadAvatar(f);
+            }}
+          />
+          <button
+            className="set-avatar-btn"
+            title="Profilbild ändern"
+            disabled={!account.logged_in || avBusy}
+            onClick={() => fileRef.current?.click()}
+          >
+            <Avatar
+              url={account.logged_in ? account.avatar_url : ""}
+              className="set-avatar"
+              ariaHidden
+              fallback={account.logged_in ? initials || "U1" : "–"}
+            />
+            <span className={`set-avatar-cam${avBusy ? " busy" : ""}`} aria-hidden="true">
+              {avBusy ? (
+                <span className="spinner" />
+              ) : (
+                <Svg d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z|M12 13m-3 0a3 3 0 1 0 6 0a3 3 0 1 0-6 0" />
+              )}
+            </span>
+          </button>
           <div className="set-acct-id">
             {editing ? (
               <input
@@ -393,6 +499,29 @@ function AccountSection({ host }: { host: HostApi }) {
         </div>
 
         <div className="set-divider" />
+
+        <Row
+          label="Profilbild"
+          desc="JPEG, PNG oder WebP · max. 8 MB · gilt für dein Subunit-Konto in allen Apps."
+        >
+          <button
+            className="btn-ghost minibtn"
+            disabled={!account.logged_in || avBusy}
+            onClick={() => fileRef.current?.click()}
+          >
+            {avBusy ? "Lädt…" : account.avatar_url ? "Bild ändern" : "Bild wählen"}
+          </button>
+          {account.logged_in && !!account.avatar_url && (
+            <button
+              className="btn-ghost minibtn"
+              disabled={avBusy}
+              onClick={() => void removeAvatar()}
+            >
+              Entfernen
+            </button>
+          )}
+        </Row>
+        {avErr && <div className="set-note warn">{avErr}</div>}
 
         <Row label="Anzeigename" desc="Lokal gespeichert · erscheint in der Titelleiste.">
           {editing ? (
@@ -1235,7 +1364,7 @@ function SettingsStyle() {
 .set-row-tx{min-width:0}
 .set-row-l{font-size:13.5px;font-weight:600;letter-spacing:-.01em;color:var(--ink)}
 .set-row-d{font-size:12px;color:var(--ink3);line-height:1.5;margin-top:3px}
-.set-row-ctl{flex:none}
+.set-row-ctl{flex:none;display:flex;align-items:center;gap:8px}
 .set-divider{height:1px;background:var(--line);margin:0 -20px}
 
 .set-link{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;margin-top:2px;padding:11px;border:none;background:none;cursor:pointer;font:inherit;font-size:12.5px;font-weight:550;color:var(--ink3);transition:color .15s}
@@ -1270,6 +1399,13 @@ function SettingsStyle() {
 /* ── account ── */
 .set-acct-top{display:flex;align-items:center;gap:15px;padding:14px 0}
 .set-avatar{flex:none;width:52px;height:52px;border-radius:16px;display:grid;place-items:center;font-weight:780;font-size:18px;font-family:var(--mono,ui-monospace,monospace);color:#06202a;background:var(--cyan);background-image:linear-gradient(155deg,rgba(255,255,255,.42),rgba(0,0,0,.12));box-shadow:0 10px 24px -10px var(--cyan),inset 0 1px 0 rgba(255,255,255,.4)}
+/* Avatar as upload trigger: hover reveals a camera badge; disabled = signed out. */
+.set-avatar-btn{position:relative;flex:none;border:none;background:none;padding:0;cursor:pointer;border-radius:16px}
+.set-avatar-btn:disabled{cursor:default}
+.set-avatar-cam{position:absolute;right:-4px;bottom:-4px;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:var(--menu-bg,var(--glass));border:1px solid var(--line);box-shadow:var(--shadow-sm);color:var(--ink2);opacity:0;transition:opacity .15s}
+.set-avatar-btn:hover:not(:disabled) .set-avatar-cam,.set-avatar-btn:focus-visible .set-avatar-cam,.set-avatar-cam.busy{opacity:1}
+.set-avatar-cam svg{width:12px;height:12px}
+.set-avatar-cam .spinner{width:11px;height:11px;margin:0;border-width:2px}
 .set-acct-id{flex:1;min-width:0}
 .set-name{display:inline-flex;align-items:center;gap:8px;border:none;background:none;cursor:pointer;font:inherit;font-size:18px;font-weight:680;letter-spacing:-.02em;color:var(--ink);padding:0}
 .set-name-edit{display:grid;place-items:center;width:15px;height:15px;color:var(--ink3);opacity:0;transition:opacity .15s}
@@ -1401,6 +1537,8 @@ const plugin: PluginModule = {
       "backend:sni-api",
       "backend:transcribe-api",
       "backend:memory-agent",
+      // Konto: avatar upload/delete against auth.subunit.ai/me/avatar.
+      "backend:auth",
     ],
     nav: { section: "ops", order: 90 },
     commands: [

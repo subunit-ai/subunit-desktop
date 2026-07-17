@@ -23,6 +23,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { HostApi, PluginModule } from "../../plugin/types";
+import { Avatar } from "../../components/Avatar";
 import {
   createConvo,
   getConvo,
@@ -255,6 +256,8 @@ function TeamView({ host }: { host: HostApi }) {
 
   const sorted = [...convos].sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0));
   const dmUsers = users.filter((u) => u.email !== myEmail);
+  // u1-chat delivers team_users.avatar as an absolute (versioned) URL.
+  const avatarOf = (email?: string) => users.find((u) => u.email === email)?.avatar || "";
 
   return (
     <div className="tm">
@@ -282,10 +285,9 @@ function TeamView({ host }: { host: HostApi }) {
                     const label = nameOf(u.email, u.name);
                     return (
                       <button key={u.email} className="tm-pick-i" onClick={() => void startDM(u.email)}>
-                        <span className="tm-av sm">
-                          {initialOf(label)}
+                        <Avatar url={u.avatar} className="tm-av sm" fallback={initialOf(label)}>
                           {isOnline(u.last_seen) && <span className="tm-presence" />}
-                        </span>
+                        </Avatar>
                         <span className="tm-pick-n">{label}</span>
                       </button>
                     );
@@ -316,10 +318,13 @@ function TeamView({ host }: { host: HostApi }) {
                   className={`tm-convo${c.id === activeId ? " is-active" : ""}`}
                   onClick={() => setActiveId(c.id)}
                 >
-                  <span className={`tm-av${isDM ? "" : " grp"}`}>
-                    {isDM ? initialOf(title) : <Svg d={ICONS.group} />}
+                  <Avatar
+                    url={isDM ? avatarOf(c.other) : ""}
+                    className={`tm-av${isDM ? "" : " grp"}`}
+                    fallback={isDM ? initialOf(title) : <Svg d={ICONS.group} />}
+                  >
                     {online && <span className="tm-presence" />}
-                  </span>
+                  </Avatar>
                   <span className="tm-convo-tx">
                     <span className="tm-convo-top">
                       <span className="tm-convo-title">{title}</span>
@@ -356,10 +361,13 @@ function TeamView({ host }: { host: HostApi }) {
                 const online = isDM && isOnline(active.other_seen);
                 return (
                   <>
-                    <span className={`tm-av${isDM ? "" : " grp"}`}>
-                      {isDM ? initialOf(title) : <Svg d={ICONS.group} />}
+                    <Avatar
+                      url={isDM ? avatarOf(active.other) : ""}
+                      className={`tm-av${isDM ? "" : " grp"}`}
+                      fallback={isDM ? initialOf(title) : <Svg d={ICONS.group} />}
+                    >
                       {online && <span className="tm-presence" />}
-                    </span>
+                    </Avatar>
                     <div className="tm-conv-id">
                       <div className="tm-conv-title">{title}</div>
                       <div className="tm-conv-sub">

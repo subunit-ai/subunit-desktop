@@ -82,6 +82,7 @@ export interface TaskDTO {
 export interface TeamUserDTO {
   email: string;
   name?: string;
+  /** Absolute, versioned profile-image URL (auth.subunit.ai) — "" / absent = none. */
   avatar?: string;
   op?: number;
   last_seen: number; // ms-epoch; online if < 60s old

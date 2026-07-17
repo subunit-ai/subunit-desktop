@@ -23,6 +23,7 @@ import { PluginLoader, type RegisteredPlugin } from "./plugin/loader";
 import type { Account } from "./plugin/types";
 import { login, logout } from "./lib/auth";
 import { appVersion } from "./lib/ipc";
+import { Avatar } from "./components/Avatar";
 import { SubunitMark } from "./components/SubunitMark";
 import { U1Assistant } from "./components/U1Assistant";
 
@@ -211,7 +212,11 @@ function AccountChip() {
         onClick={() => setOpen((o) => !o)}
         title={name || account.email}
       >
-        {busy ? <span className="acct-spin" /> : <span className="ini">{initial}</span>}
+        {busy ? (
+          <span className="acct-spin" />
+        ) : (
+          <Avatar url={account.avatar_url} className="ini" fallback={initial} />
+        )}
         <span className="acct-text">
           <span className="acct-name">{name || deriveName(account.email)}</span>
           <span className="acct-plan">{account.plan}</span>
@@ -222,7 +227,7 @@ function AccountChip() {
       {open && (
         <div className="acct-pop" role="menu">
           <div className="acct-pop-head">
-            <span className="acct-pop-av">{initial}</span>
+            <Avatar url={account.avatar_url} className="acct-pop-av" fallback={initial} />
             <div className="acct-pop-id">
               {editing ? (
                 <input

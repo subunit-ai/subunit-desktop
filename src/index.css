@@ -347,6 +347,17 @@ html.dark .dock-brand b .brand-unit {
 .acct:disabled {
   cursor: default;
 }
+/* Profile image inside ANY initials-avatar circle (components/Avatar.tsx):
+   fills the wrapper and inherits its rounding. The wrapper keeps today's
+   initials look as the fallback when there is no (loadable) image. */
+.av-img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+  display: block;
+}
+
 .acct .ini {
   width: 26px;
   height: 26px;

@@ -43,6 +43,9 @@ pub struct Account {
     pub email: String,
     pub plan: String,
     pub workspace_id: String,
+    /// Public, versioned avatar URL ("" = no avatar). Safe to hand out: the
+    /// GET /avatar/<id>?v=… endpoint is public, so a plain <img src> works.
+    pub avatar_url: String,
     pub logged_in: bool,
 }
 
@@ -60,8 +63,34 @@ pub fn get_account(state: State<'_, AppState>) -> Account {
         email: c.account_email.clone(),
         plan: c.plan.clone(),
         workspace_id: c.subunit_workspace_id.clone(),
+        avatar_url: c.account_avatar_url.clone(),
         logged_in: c.logged_in(),
     }
+}
+
+/// Store the account's avatar URL after the frontend uploaded/removed the image
+/// itself (POST/DELETE auth.subunit.ai/me/avatar). The JWT "picture" claim only
+/// catches up on the next token refresh (≤5 min) — this makes the change land in
+/// the titlebar chip immediately. Only auth.subunit.ai avatar URLs (or "") are
+/// accepted; display-only either way (never a token).
+#[tauri::command]
+pub fn set_avatar_url(app: AppHandle, url: String) -> Result<(), String> {
+    if !url.is_empty() && !url.starts_with("https://auth.subunit.ai/avatar/") {
+        return Err("invalid avatar url".into());
+    }
+    let state = app.state::<AppState>();
+    let cfg = {
+        let mut c = state.config.lock();
+        if c.account_avatar_url == url {
+            return Ok(()); // no change → no event
+        }
+        c.account_avatar_url = url;
+        c.clone()
+    };
+    let res = cfg.save().map_err(|e| e.to_string());
+    use tauri::Emitter;
+    let _ = app.emit("subunit://config-changed", ());
+    res
 }
 
 /// A fresh access token for the frontend to attach as `Authorization: Bearer …`
@@ -98,6 +127,7 @@ pub fn logout(app: AppHandle) -> Result<(), String> {
         c.subunit_token_expires_in = 0;
         c.subunit_workspace_id.clear();
         c.account_email.clear();
+        c.account_avatar_url.clear();
         c.plan = "free".to_string(); // signed out → no entitlement
         c.clone()
     };

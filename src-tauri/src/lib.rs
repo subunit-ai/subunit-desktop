@@ -76,6 +76,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::app_version,
             commands::get_account,
+            commands::set_avatar_url,
             commands::get_auth_token,
             commands::login,
             commands::logout,
